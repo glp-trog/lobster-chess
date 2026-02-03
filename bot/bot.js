@@ -25,22 +25,31 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+async function readJsonOrThrow(r, pathForErr) {
+  const ct = (r.headers.get('content-type') || '').toLowerCase();
+  const text = await r.text();
+  try {
+    const j = JSON.parse(text);
+    if (!j.success) throw new Error(`${pathForErr}: ${j.error || 'request failed'}`);
+    return j;
+  } catch (e) {
+    const preview = String(text || '').slice(0, 180).replace(/\s+/g, ' ');
+    throw new Error(`${pathForErr}: non-JSON response (status ${r.status}, ct=${ct}) :: ${preview}`);
+  }
+}
+
 async function post(path, body) {
   const r = await fetch(`${API}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  const j = await r.json();
-  if (!j.success) throw new Error(`${path}: ${j.error || 'request failed'}`);
-  return j;
+  return await readJsonOrThrow(r, path);
 }
 
 async function get(path) {
   const r = await fetch(`${API}${path}`);
-  const j = await r.json();
-  if (!j.success) throw new Error(`${path}: ${j.error || 'request failed'}`);
-  return j;
+  return await readJsonOrThrow(r, path);
 }
 
 // -----------------------------
