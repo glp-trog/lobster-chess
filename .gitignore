@@ -3,3 +3,6 @@ node_modules/
 .env
 .env.*
 # wrangler.toml is part of the repo (secrets are configured in Cloudflare dashboard)
+
+# local test payloads
+api/*.json
