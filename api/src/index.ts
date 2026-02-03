@@ -56,6 +56,7 @@ type GameState = {
 
 type Env = {
   INVITE_SECRET: string;
+  KV: KVNamespace;
   LOBBY: DurableObjectNamespace;
   GAME: DurableObjectNamespace;
   RATINGS: DurableObjectNamespace;
@@ -147,6 +148,16 @@ function randomId(prefix: string) {
   return `${prefix}_${crypto.randomUUID()}`;
 }
 
+async function kvGetJson<T>(kv: KVNamespace, key: string): Promise<T | null> {
+  const v = await kv.get(key);
+  if (!v) return null;
+  return JSON.parse(v) as T;
+}
+
+async function kvPutJson(kv: KVNamespace, key: string, value: unknown) {
+  await kv.put(key, JSON.stringify(value));
+}
+
 function parseUci(move: string): { from: string; to: string; promotion?: string } | null {
   const m = (move || '').trim().toLowerCase();
   if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(m)) return null;
@@ -172,6 +183,35 @@ export default {
     // Root ping
     if (url.pathname === '/' || url.pathname === '/api') {
       return ok({ message: 'lobster-chess api', day: yyyyMmDdUTC() });
+    }
+
+    // Register (KV) - avoid Durable Objects hot path
+    if (url.pathname === '/api/register' && req.method === 'POST') {
+      const body = await readJson<{ inviteCode?: string; agentName?: string }>(req);
+      const okInv = await validateInvite(env, body.inviteCode);
+      if (!okInv) return err('Invalid invite code', 401);
+
+      const name = (body.agentName || '').trim() || 'AnonymousAgent';
+      const agentId = randomId('agent');
+      const token = randomId('token');
+      const now = nowMs();
+
+      await kvPutJson(env.KV, `token:${token}`, { agentId, name, createdAtMs: now });
+      await kvPutJson(env.KV, `agent:${agentId}`, { agentId, name, createdAtMs: now });
+
+      return ok({ agentId, agentToken: token, name });
+    }
+
+    // Heartbeat (KV) - optional, best-effort
+    if (url.pathname === '/api/heartbeat' && req.method === 'POST') {
+      const body = await readJson<{ agentToken?: string }>(req);
+      const token = String(body.agentToken || '');
+      if (!token) return err('Missing agentToken', 400);
+      const rec = await kvGetJson<{ agentId: string; name: string }>(env.KV, `token:${token}`);
+      if (!rec) return err('Unknown agent token', 401);
+      // Touch agent record (best-effort; doesn't need to be perfect)
+      await kvPutJson(env.KV, `agent:${rec.agentId}`, { agentId: rec.agentId, name: rec.name, lastSeenMs: nowMs() });
+      return ok({ agentId: rec.agentId, name: rec.name });
     }
 
     // Leaderboard goes to Ratings DO
@@ -288,34 +328,7 @@ export class LobbyDO {
       return null;
     };
 
-    if (req.method === 'POST' && path === '/api/register') {
-      const gate = await requireInvite();
-      if (gate) return gate;
-
-      const body = await readJson<{ agentName?: string }>(req);
-      const name = (body.agentName || '').trim() || 'AnonymousAgent';
-
-      const st = await this.load();
-      const agentId = randomId('agent');
-      const token = randomId('token');
-      const agent: Agent = { agentId, name, token, lastSeenMs: nowMs() };
-      st.agents[token] = agent;
-      await this.save(st);
-
-      return ok({ agentId, agentToken: token, name });
-    }
-
-    if (req.method === 'POST' && path === '/api/heartbeat') {
-      const body = await readJson<{ agentToken?: string }>(req);
-      const token = body.agentToken || '';
-      const st = await this.load();
-      const agent = st.agents[token];
-      if (!agent) return err('Unknown agent token', 401);
-      agent.lastSeenMs = nowMs();
-      st.agents[token] = agent;
-      await this.save(st);
-      return ok({ agentId: agent.agentId, name: agent.name });
-    }
+    // /api/register and /api/heartbeat are handled at the Worker level (KV) to reduce DO volume.
 
     if (req.method === 'POST' && path === '/api/queue/join') {
       const gate = await requireInvite();
@@ -682,7 +695,19 @@ LobbyDO.prototype.fetch = async function (req: Request): Promise<Response> {
   const url = new URL(req.url);
   if ((url.pathname === '/agentLookup' || url.hostname === 'internal') && req.method === 'POST') {
     const body = await readJson<{ agentToken?: string }>(req);
-    const token = body.agentToken || '';
+    const token = String(body.agentToken || '');
+    if (!token) return err('Unknown agent token', 401);
+
+    // Prefer KV-based lookup (no lobby state dependency)
+    try {
+      const rec = await (this as any).env.KV.get(`token:${token}`);
+      if (rec) {
+        const agent = JSON.parse(rec);
+        return ok({ agent });
+      }
+    } catch {}
+
+    // Backward-compat fallback to old in-DO agent registry
     const st = await (this as any).load();
     const agent = st.agents[token];
     if (!agent) return err('Unknown agent token', 401);

@@ -8,6 +8,10 @@ compatibility_date = "2026-02-03"
 [vars]
 # INVITE_SECRET must be set as a *Secret* in Cloudflare dashboard.
 
+[[kv_namespaces]]
+binding = "KV"
+id = "8d102c9a77ea428a9962823cabb87c8a"
+
 [[durable_objects.bindings]]
 name = "LOBBY"
 class_name = "LobbyDO"
