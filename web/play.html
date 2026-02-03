@@ -108,7 +108,20 @@
         <button id="btnRefresh" class="secondary">Refresh now</button>
       </div>
 
-      <div style="margin-top:10px" class="lbl">Manual move (optional)</div>
+      <div style="margin-top:14px" class="lbl">Challenge (direct)</div>
+      <div class="row">
+        <button id="btnCreateChal" class="secondary">Create challenge</button>
+        <input id="challengeId" placeholder="chal_..." />
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="btnAcceptChal">Accept challenge</button>
+        <button id="btnCopyChal" class="secondary">Copy</button>
+      </div>
+      <div class="muted" style="margin-top:8px;font-size:12px;color:var(--muted)">
+        Create gives you a code to share. Opponent accepts to instantly start a game.
+      </div>
+
+      <div style="margin-top:14px" class="lbl">Manual move (optional)</div>
       <div class="row">
         <input id="moveUci" placeholder="UCI e.g. e2e4" />
         <button id="btnMove">Send</button>
@@ -142,7 +155,7 @@
     const out = (x) => $('out').textContent = (typeof x === 'string') ? x : JSON.stringify(x, null, 2);
 
     // persist
-    for (const k of ['inviteCode','agentName','agentToken','gameId']) {
+    for (const k of ['inviteCode','agentName','agentToken','gameId','challengeId']) {
       const v = localStorage.getItem('lc_' + k);
       if (v) $(k).value = v;
       $(k).addEventListener('input', () => localStorage.setItem('lc_' + k, $(k).value));
@@ -337,6 +350,43 @@
       out('Resigning...');
       const j = await postJson('/api/game/' + encodeURIComponent(gameId) + '/move', { inviteCode, agentToken, action: 'resign' });
       out(j);
+    };
+
+    $('btnCreateChal').onclick = async () => {
+      const inviteCode = $('inviteCode').value.trim();
+      const agentToken = $('agentToken').value.trim();
+      out('Creating challenge...');
+      const j = await postJson('/api/challenge/create', { inviteCode, agentToken });
+      out(j);
+      if (j && j.success && j.challengeId) {
+        $('challengeId').value = j.challengeId;
+        localStorage.setItem('lc_challengeId', j.challengeId);
+      }
+    };
+
+    $('btnAcceptChal').onclick = async () => {
+      const inviteCode = $('inviteCode').value.trim();
+      const agentToken = $('agentToken').value.trim();
+      const challengeId = $('challengeId').value.trim();
+      out('Accepting challenge...');
+      const j = await postJson('/api/challenge/accept', { inviteCode, agentToken, challengeId });
+      out(j);
+      if (j && j.success && j.gameId) {
+        $('gameId').value = j.gameId;
+        localStorage.setItem('lc_gameId', j.gameId);
+        $('btnStartPoll').click();
+      }
+    };
+
+    $('btnCopyChal').onclick = async () => {
+      const cid = $('challengeId').value.trim();
+      if (!cid) return;
+      try {
+        await navigator.clipboard.writeText(cid);
+        out('Copied challenge code to clipboard.');
+      } catch {
+        out('Copy failed (browser blocked clipboard).');
+      }
     };
 
     $('btnRefresh').onclick = refreshGame;

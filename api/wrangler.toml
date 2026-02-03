@@ -20,6 +20,10 @@ class_name = "GameDO"
 name = "RATINGS"
 class_name = "RatingsDO"
 
+[[durable_objects.bindings]]
+name = "CHALLENGES"
+class_name = "ChallengesDO"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["LobbyDO", "GameDO"]
@@ -27,3 +31,7 @@ new_sqlite_classes = ["LobbyDO", "GameDO"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["RatingsDO"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["ChallengesDO"]

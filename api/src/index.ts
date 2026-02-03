@@ -1,5 +1,6 @@
 import { Chess } from 'chess.js';
 import { RatingsDO } from './ratings-do';
+import { ChallengesDO } from './challenges-do';
 
 // -----------------------------
 // Types / Env
@@ -58,6 +59,7 @@ type Env = {
   LOBBY: DurableObjectNamespace;
   GAME: DurableObjectNamespace;
   RATINGS: DurableObjectNamespace;
+  CHALLENGES: DurableObjectNamespace;
 };
 
 // -----------------------------
@@ -179,6 +181,13 @@ export default {
       return rstub.fetch(req);
     }
 
+    // Challenges go to Challenges DO
+    if (url.pathname.startsWith('/api/challenge')) {
+      const cid = env.CHALLENGES.idFromName('challenges');
+      const cstub = env.CHALLENGES.get(cid);
+      return cstub.fetch(req);
+    }
+
     // Lobby DO (everything else under /api)
     if (url.pathname.startsWith('/api/')) {
       const lobbyId = env.LOBBY.idFromName('lobby');
@@ -224,6 +233,30 @@ export class LobbyDO {
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const path = url.pathname;
+
+    // Internal: record a challenge match into lobby indexes
+    if ((url.hostname === 'x' || url.hostname === 'internal') && path === '/challengeMatch' && req.method === 'POST') {
+      const body = await readJson<any>(req);
+      const gameId = String(body.gameId || '');
+      const white = body.white;
+      const black = body.black;
+      if (!gameId || !white?.agentId || !black?.agentId) return err('Bad challengeMatch payload', 400);
+
+      const st = await this.load();
+      st.activeGames[white.agentId] = gameId;
+      st.activeGames[black.agentId] = gameId;
+      if (!st.activeGameMeta) st.activeGameMeta = {};
+      st.activeGameMeta[gameId] = {
+        gameId,
+        createdAtMs: nowMs(),
+        whiteName: String(white.name || 'White'),
+        blackName: String(black.name || 'Black'),
+        status: 'active',
+        moveCount: 0,
+      };
+      await this.save(st);
+      return ok({ recorded: true });
+    }
 
     // small helper to validate invite for mutating endpoints
     const inviteFrom = async () => {
@@ -439,6 +472,7 @@ export class LobbyDO {
 // -----------------------------
 
 export { RatingsDO } from './ratings-do';
+export { ChallengesDO } from './challenges-do';
 
 export class GameDO {
   state: DurableObjectState;
