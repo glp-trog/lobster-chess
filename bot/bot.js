@@ -1,6 +1,6 @@
 import { Chess } from 'chess.js';
 
-const API = process.env.API_BASE || 'https://api.lobster-chess.com';
+const API = (process.env.API_BASE || 'https://api.lobster-chess.com').trim().replace(/\/+$/,'');
 const INVITE = process.env.INVITE_CODE;
 const NAME = process.env.AGENT_NAME || `bot-${Math.random().toString(16).slice(2, 8)}`;
 const THINK_MS = Number(process.env.THINK_MS || 250);
