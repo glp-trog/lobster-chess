@@ -107,15 +107,37 @@ function createEngine() {
   };
 
   const bestMove = async (fen) => {
+    let latestScoreCp = null;
+
+    const scoreListener = (line) => {
+      // Example: info depth 10 score cp 23 ...
+      // Example: info depth 12 score mate 3 ...
+      const m = line.match(/\bscore\s+(cp|mate)\s+(-?\d+)\b/i);
+      if (!m) return;
+      const kind = m[1].toLowerCase();
+      const val = Number(m[2]);
+      if (!Number.isFinite(val)) return;
+      if (kind === 'cp') latestScoreCp = val;
+      else {
+        // Mate scores: convert to a large cp-equivalent for our decision logic.
+        const sign = val === 0 ? 1 : Math.sign(val);
+        latestScoreCp = sign * 100000;
+      }
+    };
+
+    listeners.add(scoreListener);
+
     send(`position fen ${fen}`);
     if (ENGINE_DEPTH && Number.isFinite(ENGINE_DEPTH)) send(`go depth ${ENGINE_DEPTH}`);
     else send(`go movetime ${ENGINE_MOVETIME_MS}`);
 
     const line = await waitFor((l) => l.startsWith('bestmove '), 15000);
+    listeners.delete(scoreListener);
+
     const parts = line.split(' ');
     const mv = parts[1];
-    if (!mv || mv === '(none)') return null;
-    return mv.trim();
+    if (!mv || mv === '(none)') return { move: null, scoreCp: latestScoreCp };
+    return { move: mv.trim(), scoreCp: latestScoreCp };
   };
 
   const quit = () => {
@@ -126,11 +148,48 @@ function createEngine() {
   return { init, bestMove, quit };
 }
 
-function randomLegalUci(fen) {
+function fenKey(fen) {
+  // Repetition key: placement + side + castling + en-passant
+  const parts = String(fen || '').trim().split(/\s+/);
+  return parts.slice(0, 4).join(' ');
+}
+
+function uciToMoveObj(uci) {
+  const s = String(uci || '').trim().toLowerCase();
+  if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(s)) return null;
+  return { from: s.slice(0, 2), to: s.slice(2, 4), promotion: s[4] };
+}
+
+function applyUciToFen(fen, uci) {
+  const chess = new Chess(fen);
+  const m = uciToMoveObj(uci);
+  if (!m) return null;
+  const res = chess.move({ from: m.from, to: m.to, promotion: m.promotion });
+  if (!res) return null;
+  return chess.fen();
+}
+
+function randomLegalUci(fen, avoidKeys = null) {
   const chess = new Chess(fen);
   const moves = chess.moves({ verbose: true });
   if (!moves.length) return null;
-  const m = moves[Math.floor(Math.random() * moves.length)];
+
+  // Shuffle moves for randomness
+  for (let i = moves.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [moves[i], moves[j]] = [moves[j], moves[i]];
+  }
+
+  for (const m of moves) {
+    const uci = `${m.from}${m.to}${m.promotion || ''}`.toLowerCase();
+    if (!avoidKeys) return uci;
+    const nf = applyUciToFen(fen, uci);
+    if (!nf) continue;
+    if (!avoidKeys.has(fenKey(nf))) return uci;
+  }
+
+  // If everything repeats, fall back to first legal move
+  const m = moves[0];
   return `${m.from}${m.to}${m.promotion || ''}`.toLowerCase();
 }
 
@@ -216,10 +275,15 @@ async function main() {
   console.log(`\n[lobster-chess bot] matched gameId=${gameId}`);
 
   let lastMoveCount = -1;
+  const seen = new Map(); // fenKey -> count
 
   while (true) {
     const g = await get(`/api/game/${encodeURIComponent(gameId)}`);
     const game = g.game;
+
+    // Track repetition keys
+    const keyNow = fenKey(game.fen);
+    seen.set(keyNow, (seen.get(keyNow) || 0) + 1);
 
     if (game.moveCount !== lastMoveCount) {
       lastMoveCount = game.moveCount;
@@ -237,20 +301,39 @@ async function main() {
 
     if (game.turn === myColor) {
       let uci = null;
+      let scoreCp = null;
+
       try {
-        uci = await engine.bestMove(game.fen);
+        const bm = await engine.bestMove(game.fen);
+        uci = bm.move;
+        scoreCp = bm.scoreCp;
       } catch (e) {
         console.log(`[engine] error: ${e.message}`);
       }
 
       if (!uci || !isLegalUci(game.fen, uci)) {
-        const fallback = randomLegalUci(game.fen);
-        if (!fallback) {
-          console.log('[lobster-chess bot] no legal moves');
-          await sleep(POLL_MS);
-          continue;
+        uci = randomLegalUci(game.fen, new Set(seen.keys()));
+      }
+
+      // Avoid trivial repetition unless we're doing badly.
+      const avoidThresholdCp = -50; // allow repeats if worse than this
+      try {
+        const nextFen = applyUciToFen(game.fen, uci);
+        const nextKey = nextFen ? fenKey(nextFen) : null;
+        const wouldRepeat = nextKey ? seen.has(nextKey) : false;
+        if (wouldRepeat && (scoreCp === null || scoreCp >= avoidThresholdCp)) {
+          const alt = randomLegalUci(game.fen, new Set(seen.keys()));
+          if (alt && alt !== uci) {
+            console.log(`[repetition] avoiding repeat (scoreCp=${scoreCp ?? 'n/a'}) using alt=${alt}`);
+            uci = alt;
+          }
         }
-        uci = fallback;
+      } catch {}
+
+      if (!uci) {
+        console.log('[lobster-chess bot] no legal moves');
+        await sleep(POLL_MS);
+        continue;
       }
 
       try {
