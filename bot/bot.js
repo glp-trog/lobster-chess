@@ -1,9 +1,10 @@
 import { Chess } from 'chess.js';
 import { createRequire } from 'node:module';
+import { spawn } from 'node:child_process';
 
 const require = createRequire(import.meta.url);
-// The npm package's main points to a non-existent file; import a known build directly.
-const Stockfish = require('stockfish/src/stockfish-17.1-lite-single-03e3232.js');
+// Use the stockfish package assets, but run it as a separate Node process (UCI over stdin/stdout).
+const ENGINE_JS = require.resolve('stockfish/src/stockfish-17.1-lite-single-03e3232.js');
 
 const API = (process.env.API_BASE || 'https://api.lobster-chess.com').trim().replace(/\/+$/, '');
 const INVITE = process.env.INVITE_CODE;
@@ -47,32 +48,38 @@ async function get(path) {
 // -----------------------------
 
 function createEngine() {
-  const sf = Stockfish();
-  const listeners = new Set();
+  const proc = spawn(process.execPath, [ENGINE_JS], { stdio: ['pipe', 'pipe', 'pipe'] });
+  proc.stdin.setDefaultEncoding('utf8');
 
+  const listeners = new Set();
   const onLine = (line) => {
-    for (const fn of listeners) fn(line);
+    const s = String(line).trim();
+    if (!s) return;
+    for (const fn of listeners) fn(s);
   };
 
-  // stockfish package supports either .onmessage (worker-like) or event callback
-  if (typeof sf === 'function') {
-    // some builds expose a function you call with commands and it returns lines via callbacks
-    // but stockfish() in this package returns a Worker-like interface in most environments.
-  }
+  const wire = (stream) => {
+    let buf = '';
+    stream.on('data', (chunk) => {
+      buf += chunk.toString('utf8');
+      while (true) {
+        const idx = buf.indexOf('\n');
+        if (idx < 0) break;
+        const line = buf.slice(0, idx);
+        buf = buf.slice(idx + 1);
+        onLine(line);
+      }
+    });
+  };
 
-  if (sf && typeof sf.addEventListener === 'function') {
-    sf.addEventListener('message', (e) => onLine(String(e.data)));
-  } else if (sf && 'onmessage' in sf) {
-    sf.onmessage = (e) => onLine(String(e.data));
-  }
+  wire(proc.stdout);
+  wire(proc.stderr);
 
   const send = (cmd) => {
-    if (sf && typeof sf.postMessage === 'function') sf.postMessage(cmd);
-    else if (typeof sf === 'function') sf(cmd);
-    else throw new Error('Unsupported stockfish interface');
+    proc.stdin.write(cmd + '\n');
   };
 
-  const waitFor = (predicate, timeoutMs = 5000) =>
+  const waitFor = (predicate, timeoutMs = 8000) =>
     new Promise((resolve, reject) => {
       const t0 = Date.now();
       const fn = (line) => {
@@ -89,24 +96,21 @@ function createEngine() {
 
   const init = async () => {
     send('uci');
-    await waitFor((l) => l === 'uciok', 8000);
+    await waitFor((l) => l === 'uciok');
     send('isready');
-    await waitFor((l) => l === 'readyok', 8000);
-    // stronger + faster defaults
+    await waitFor((l) => l === 'readyok');
     send('setoption name Threads value 1');
     send('setoption name Hash value 64');
     send('ucinewgame');
     send('isready');
-    await waitFor((l) => l === 'readyok', 8000);
+    await waitFor((l) => l === 'readyok');
   };
 
   const bestMove = async (fen) => {
     send(`position fen ${fen}`);
-    if (ENGINE_DEPTH && Number.isFinite(ENGINE_DEPTH)) {
-      send(`go depth ${ENGINE_DEPTH}`);
-    } else {
-      send(`go movetime ${ENGINE_MOVETIME_MS}`);
-    }
+    if (ENGINE_DEPTH && Number.isFinite(ENGINE_DEPTH)) send(`go depth ${ENGINE_DEPTH}`);
+    else send(`go movetime ${ENGINE_MOVETIME_MS}`);
+
     const line = await waitFor((l) => l.startsWith('bestmove '), 15000);
     const parts = line.split(' ');
     const mv = parts[1];
@@ -114,7 +118,12 @@ function createEngine() {
     return mv.trim();
   };
 
-  return { init, bestMove };
+  const quit = () => {
+    try { send('quit'); } catch {}
+    try { proc.kill(); } catch {}
+  };
+
+  return { init, bestMove, quit };
 }
 
 function randomLegalUci(fen) {
