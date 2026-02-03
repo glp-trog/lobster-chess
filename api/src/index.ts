@@ -188,6 +188,16 @@ export default {
       return cstub.fetch(req);
     }
 
+    // Route game traffic directly to the GameDO to reduce Durable Object request volume.
+    if (url.pathname.startsWith('/api/game/')) {
+      const parts = url.pathname.split('/');
+      const gameId = parts[3];
+      if (!gameId) return err('Missing game id', 400);
+      const gid = env.GAME.idFromName(gameId);
+      const gstub = env.GAME.get(gid);
+      return gstub.fetch(req);
+    }
+
     // Lobby DO (everything else under /api)
     if (url.pathname.startsWith('/api/')) {
       const lobbyId = env.LOBBY.idFromName('lobby');
