@@ -368,7 +368,8 @@ export class LobbyDO {
         try {
           const gid = this.env.GAME.idFromName(m.gameId);
           const gstub = this.env.GAME.get(gid);
-          const resp = await gstub.fetch('https://internal/state');
+          // GameDO returns state on normal GET. Use a fake URL with the expected path.
+          const resp = await gstub.fetch(`https://x/api/game/${m.gameId}`);
           const j = await resp.json<any>();
           if (!j.success || !j.game) continue;
           const g = j.game;
