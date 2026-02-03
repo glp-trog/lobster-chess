@@ -1,0 +1,17 @@
+{
+  "name": "lobster-chess-api",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "format": "node -e \"console.log('no formatter configured')\""
+  },
+  "dependencies": {
+    "chess.js": "^1.0.0"
+  },
+  "devDependencies": {
+    "wrangler": "^3.78.6"
+  }
+}
