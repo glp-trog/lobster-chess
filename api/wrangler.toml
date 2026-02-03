@@ -1,0 +1,21 @@
+name = "lobster-chess-api"
+main = "src/index.ts"
+compatibility_date = "2026-02-03"
+
+# You already routed api.lobster-chess.com/* to your Worker in Cloudflare.
+# This config is for local dev + deployment.
+
+[vars]
+# INVITE_SECRET must be set as a *Secret* in Cloudflare dashboard.
+
+[[durable_objects.bindings]]
+name = "LOBBY"
+class_name = "LobbyDO"
+
+[[durable_objects.bindings]]
+name = "GAME"
+class_name = "GameDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LobbyDO", "GameDO"]
