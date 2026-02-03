@@ -1,4 +1,5 @@
 import { Chess } from 'chess.js';
+import { RatingsDO } from './ratings-do';
 
 // -----------------------------
 // Types / Env
@@ -45,6 +46,7 @@ type GameState = {
   lastTickMs: number;
   status: GameStatus;
   result: string | null; // e.g. "1-0", "0-1", "1/2-1/2"
+  ratingReported?: boolean;
   pgn: string; // full PGN from chess.js
   fen: string;
   moveCount: number;
@@ -55,6 +57,7 @@ type Env = {
   INVITE_SECRET: string;
   LOBBY: DurableObjectNamespace;
   GAME: DurableObjectNamespace;
+  RATINGS: DurableObjectNamespace;
 };
 
 // -----------------------------
@@ -124,7 +127,7 @@ function jsonResponse(obj: unknown, status = 200, extraHeaders: Record<string, s
   return new Response(JSON.stringify(obj), { status, headers });
 }
 
-function ok(obj: unknown) {
+function ok(obj: Record<string, unknown> = {}) {
   return jsonResponse({ success: true, ...obj });
 }
 
@@ -169,7 +172,14 @@ export default {
       return ok({ message: 'lobster-chess api', day: yyyyMmDdUTC() });
     }
 
-    // Lobby DO
+    // Leaderboard goes to Ratings DO
+    if (url.pathname === '/api/leaderboard') {
+      const rid = env.RATINGS.idFromName('ratings');
+      const rstub = env.RATINGS.get(rid);
+      return rstub.fetch(req);
+    }
+
+    // Lobby DO (everything else under /api)
     if (url.pathname.startsWith('/api/')) {
       const lobbyId = env.LOBBY.idFromName('lobby');
       const stub = env.LOBBY.get(lobbyId);
@@ -428,6 +438,8 @@ export class LobbyDO {
 // Game Durable Object
 // -----------------------------
 
+export { RatingsDO } from './ratings-do';
+
 export class GameDO {
   state: DurableObjectState;
   env: Env;
@@ -499,6 +511,7 @@ export class GameDO {
         lastTickMs: nowMs(),
         status: 'active',
         result: null,
+        ratingReported: false,
         pgn: chess.pgn(),
         fen: chess.fen(),
         moveCount: 0,
@@ -543,9 +556,31 @@ export class GameDO {
       if (st.status !== 'active') return err('Game is not active', 409, { status: st.status, result: st.result });
       if (st.turn !== color) return err('Not your turn', 409, { turn: st.turn });
 
+      const maybeReportRating = async () => {
+        if (!st.result || st.ratingReported) return;
+        try {
+          const rid = this.env.RATINGS.idFromName('ratings');
+          const rstub = this.env.RATINGS.get(rid);
+          await rstub.fetch('https://x/report', {
+            method: 'POST',
+            body: JSON.stringify({
+              gameId: st.gameId,
+              endedAtMs: nowMs(),
+              white: { agentId: st.whiteAgentId, name: st.whiteName },
+              black: { agentId: st.blackAgentId, name: st.blackName },
+              result: st.result,
+            }),
+          });
+          st.ratingReported = true;
+        } catch {
+          // ignore transient failures
+        }
+      };
+
       if (body.action === 'resign') {
         st.status = 'resigned';
         st.result = color === 'w' ? '0-1' : '1-0';
+        await maybeReportRating();
         await this.saveState(st);
         return ok({ game: this.toPublic(st) });
       }
@@ -571,9 +606,11 @@ export class GameDO {
       if (chess.isCheckmate()) {
         st.status = 'checkmate';
         st.result = st.turn === 'w' ? '1-0' : '0-1';
+        await maybeReportRating();
       } else if (chess.isStalemate() || chess.isDraw()) {
         st.status = 'draw';
         st.result = '1/2-1/2';
+        await maybeReportRating();
       }
 
       // Reset tick anchor
