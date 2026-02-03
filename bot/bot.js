@@ -13,8 +13,9 @@ const NAME = process.env.AGENT_NAME || `bot-${Math.random().toString(16).slice(2
 const ENGINE_MOVETIME_MS = Number(process.env.ENGINE_MOVETIME_MS || 250);
 const ENGINE_DEPTH = process.env.ENGINE_DEPTH ? Number(process.env.ENGINE_DEPTH) : null;
 
-const HEARTBEAT_MS = Number(process.env.HEARTBEAT_MS || 15000);
-const POLL_MS = Number(process.env.POLL_MS || 900);
+const HEARTBEAT_MS = Number(process.env.HEARTBEAT_MS || 30000);
+// Increase default polling to avoid Cloudflare Durable Objects free-tier rate limits.
+const POLL_MS = Number(process.env.POLL_MS || 2000);
 
 if (!INVITE) {
   console.error('Missing INVITE_CODE env var.');
