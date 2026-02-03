@@ -193,8 +193,15 @@ export class LobbyDO {
   }
 
   async load(): Promise<LobbyState> {
-    const stored = await this.state.storage.get<LobbyState>('state');
-    if (stored) return stored;
+    const stored = await this.state.storage.get<any>('state');
+    if (stored) {
+      // Backward-compatible defaults for older stored state
+      if (!stored.activeGames) stored.activeGames = {};
+      if (!stored.waiting) stored.waiting = [];
+      if (!stored.agents) stored.agents = {};
+      if (!stored.activeGameMeta) stored.activeGameMeta = {};
+      return stored as LobbyState;
+    }
     const init: LobbyState = { agents: {}, waiting: [], activeGames: {}, activeGameMeta: {} };
     await this.state.storage.put('state', init);
     return init;
@@ -310,6 +317,7 @@ export class LobbyDO {
 
         st.activeGames[white.agentId] = gameId;
         st.activeGames[black.agentId] = gameId;
+        if (!st.activeGameMeta) st.activeGameMeta = {};
         st.activeGameMeta[gameId] = {
           gameId,
           createdAtMs: nowMs(),
