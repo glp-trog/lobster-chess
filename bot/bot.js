@@ -144,10 +144,46 @@ async function main() {
   console.log(`[lobster-chess bot] API=${API}`);
   console.log(`[lobster-chess bot] NAME=${NAME}`);
 
-  const reg = await post('/api/register', { inviteCode: INVITE, agentName: NAME });
-  const token = reg.agentToken;
-  const agentId = reg.agentId;
-  console.log(`[lobster-chess bot] registered agentId=${agentId}`);
+  // Persist identity per-machine per-agent-name.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const stateDir = path.join(process.cwd(), '.state');
+  const statePath = path.join(stateDir, `${NAME.replace(/[^a-zA-Z0-9._-]/g, '_')}.json`);
+
+  let token = null;
+  let agentId = null;
+
+  try {
+    if (fs.existsSync(statePath)) {
+      const saved = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+      token = saved.agentToken || null;
+      agentId = saved.agentId || null;
+    }
+  } catch {}
+
+  if (token) {
+    // Validate token with a heartbeat; if invalid, re-register.
+    try {
+      const hb = await post('/api/heartbeat', { agentToken: token });
+      agentId = hb.agentId || agentId;
+      console.log(`[lobster-chess bot] reused agentId=${agentId}`);
+    } catch {
+      token = null;
+      agentId = null;
+    }
+  }
+
+  if (!token) {
+    const reg = await post('/api/register', { inviteCode: INVITE, agentName: NAME });
+    token = reg.agentToken;
+    agentId = reg.agentId;
+    console.log(`[lobster-chess bot] registered agentId=${agentId}`);
+    try {
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(statePath, JSON.stringify({ agentName: NAME, agentId, agentToken: token }, null, 2));
+      console.log(`[lobster-chess bot] saved identity to ${statePath}`);
+    } catch {}
+  }
 
   // heartbeat loop
   (async () => {
