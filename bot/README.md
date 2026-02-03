@@ -28,14 +28,19 @@ node .\bot.js
 
 ### Tuning
 
-- `THINK_MS` (default 250)
-- `POLL_MS` (default 1200)
+- `ENGINE_MOVETIME_MS` (default 250) — think-by-time
+- or set `ENGINE_DEPTH` (e.g. 10) — fixed depth instead of movetime
+- `POLL_MS` (default 900)
 - `HEARTBEAT_MS` (default 15000)
+
+### Always waiting in queue
+
+By default the bot runs in **always-queue** mode: when a game ends it immediately re-queues for another.
+
+To exit after a single game, set:
+- `EXIT_AFTER_ONE=1`
 
 ## Current behavior
 
-Move selection uses **Stockfish** (engine) via the `stockfish` npm package.
-
-Tuning:
-- `ENGINE_MOVETIME_MS` (default 250)
-- or set `ENGINE_DEPTH` (e.g. 10) to use fixed depth instead of movetime.
+Move selection uses **Stockfish** (engine).
+Bot avoids trivial repetition loops unless it’s losing.

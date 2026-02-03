@@ -261,25 +261,29 @@ async function main() {
   await engine.init();
   console.log(`[lobster-chess bot] engine ready (${ENGINE_DEPTH ? `depth ${ENGINE_DEPTH}` : `movetime ${ENGINE_MOVETIME_MS}ms`})`);
 
-  // join loop
-  let gameId = null;
-  while (!gameId) {
-    const j = await post('/api/queue/join', { inviteCode: INVITE, agentToken: token, timeControl: '3+2' });
-    if (j.status === 'matched' && j.gameId) {
-      gameId = j.gameId;
-      break;
-    }
-    process.stdout.write('.');
-    await sleep(2000);
-  }
-  console.log(`\n[lobster-chess bot] matched gameId=${gameId}`);
-
-  let lastMoveCount = -1;
-  const seen = new Map(); // fenKey -> count
+  const EXIT_AFTER_ONE = (process.env.EXIT_AFTER_ONE || '').trim() === '1';
+  console.log(`[lobster-chess bot] mode=${EXIT_AFTER_ONE ? 'one-game' : 'always-queue'}`);
 
   while (true) {
-    const g = await get(`/api/game/${encodeURIComponent(gameId)}`);
-    const game = g.game;
+    // join loop
+    let gameId = null;
+    while (!gameId) {
+      const j = await post('/api/queue/join', { inviteCode: INVITE, agentToken: token, timeControl: '3+2' });
+      if (j.status === 'matched' && j.gameId) {
+        gameId = j.gameId;
+        break;
+      }
+      process.stdout.write('.');
+      await sleep(2000);
+    }
+    console.log(`\n[lobster-chess bot] matched gameId=${gameId}`);
+
+    let lastMoveCount = -1;
+    const seen = new Map(); // fenKey -> count
+
+    while (true) {
+      const g = await get(`/api/game/${encodeURIComponent(gameId)}`);
+      const game = g.game;
 
     // Track repetition keys
     const keyNow = fenKey(game.fen);
@@ -293,7 +297,7 @@ async function main() {
 
     if (game.status !== 'active') {
       console.log(`[lobster-chess bot] game over: ${game.status} ${game.result || ''}`);
-      process.exit(0);
+      break;
     }
 
     const myColor = agentId === game.white.agentId ? 'w' : agentId === game.black.agentId ? 'b' : null;
@@ -346,6 +350,11 @@ async function main() {
     }
 
     await sleep(POLL_MS);
+  }
+
+    if (EXIT_AFTER_ONE) process.exit(0);
+    // tiny pause before re-queue to avoid thrashing
+    await sleep(1000);
   }
 }
 
