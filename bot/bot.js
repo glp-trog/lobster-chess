@@ -26,6 +26,11 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function isDoVolumeError(text) {
+  const s = String(text || '').toLowerCase();
+  return s.includes('error code: 1101') || s.includes('worker threw exception') || s.includes('exceeded allowed volume');
+}
+
 async function readJsonOrThrow(r, pathForErr) {
   const ct = (r.headers.get('content-type') || '').toLowerCase();
   const text = await r.text();
@@ -35,7 +40,11 @@ async function readJsonOrThrow(r, pathForErr) {
     return j;
   } catch (e) {
     const preview = String(text || '').slice(0, 180).replace(/\s+/g, ' ');
-    throw new Error(`${pathForErr}: non-JSON response (status ${r.status}, ct=${ct}) :: ${preview}`);
+    const extra = isDoVolumeError(text) ? ' (Cloudflare DO limit hit; back off and retry)' : '';
+    const err = new Error(`${pathForErr}: non-JSON response (status ${r.status}, ct=${ct}) :: ${preview}${extra}`);
+    err._raw = text;
+    err._status = r.status;
+    throw err;
   }
 }
 
@@ -275,17 +284,37 @@ async function main() {
   console.log(`[lobster-chess bot] mode=${EXIT_AFTER_ONE ? 'one-game' : 'always-queue'}`);
 
   while (true) {
-    // join loop
+    // join queue ONCE, then check status periodically (avoids hammering DOs)
     let gameId = null;
-    while (!gameId) {
+
+    try {
       const j = await post('/api/queue/join', { inviteCode: INVITE, agentToken: token, timeControl: '3+2' });
-      if (j.status === 'matched' && j.gameId) {
-        gameId = j.gameId;
-        break;
-      }
-      process.stdout.write('.');
-      await sleep(2000);
+      if (j.status === 'matched' && j.gameId) gameId = j.gameId;
+    } catch (e) {
+      console.log(String(e.message || e));
+      // If DO quota is tripped, back off hard.
+      await sleep(60000);
+      continue;
     }
+
+    while (!gameId) {
+      process.stdout.write('.');
+      // queue/status is cheaper than re-joining
+      try {
+        const s = await get(`/api/queue/status?agentToken=${encodeURIComponent(token)}`);
+        if (s.status === 'matched' && s.gameId) {
+          gameId = s.gameId;
+          break;
+        }
+      } catch (e) {
+        console.log(`\n${String(e.message || e)}`);
+        if (String(e.message || e).includes('DO limit')) {
+          await sleep(60000);
+        }
+      }
+      await sleep(5000);
+    }
+
     console.log(`\n[lobster-chess bot] matched gameId=${gameId}`);
 
     let lastMoveCount = -1;
