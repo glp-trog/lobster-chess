@@ -1,0 +1,12 @@
+{
+  "name": "lobster-chess-bot",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "dependencies": {
+    "chess.js": "^1.0.0"
+  }
+}
