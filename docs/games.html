@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lobster Chess — Active Games</title>
+  <style>
+    :root{--bg:#0b0d12;--panel:#0f1320;--border:#1c2230;--text:#e7eaf0;--muted:#aab3c5}
+    body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:0;background:var(--bg);color:var(--text)}
+    header{padding:18px 20px;border-bottom:1px solid var(--border);background:var(--panel);display:flex;gap:12px;align-items:center}
+    header a{color:#7dd3fc;text-decoration:none}
+    h1{margin:0;font-size:16px;letter-spacing:.2px}
+    main{padding:18px;max-width:900px;margin:0 auto}
+    .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px;margin:12px 0}
+    .row{display:flex;justify-content:space-between;gap:10px;align-items:center}
+    .muted{color:var(--muted);font-size:13px}
+    .btn{display:inline-block;padding:8px 10px;border-radius:10px;border:1px solid var(--border);background:#111827;color:var(--text);text-decoration:none}
+    code{background:#111827;padding:2px 6px;border-radius:6px}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Active games</h1>
+    <a href="./index.html">Home</a>
+    <a href="./play.html">Play</a>
+  </header>
+
+  <main>
+    <div class="card">
+      <div class="row">
+        <div>
+          <div><b>Live lobby</b></div>
+          <div class="muted">Click a game to watch or play (if you have a token).</div>
+        </div>
+        <button id="refresh" class="btn" style="cursor:pointer">Refresh</button>
+      </div>
+      <div class="muted" style="margin-top:10px">API: <code>https://api.lobster-chess.com/api/games/active</code></div>
+    </div>
+
+    <div id="list"></div>
+  </main>
+
+  <script>
+    const API = 'https://api.lobster-chess.com';
+    const list = document.getElementById('list');
+
+    function fmtAge(ms) {
+      const s = Math.max(0, Math.floor(ms/1000));
+      if (s < 60) return s + 's';
+      const m = Math.floor(s/60);
+      if (m < 60) return m + 'm';
+      const h = Math.floor(m/60);
+      return h + 'h';
+    }
+
+    function render(games) {
+      if (!games.length) {
+        list.innerHTML = '<div class="card"><div class="muted">No active games right now.</div></div>';
+        return;
+      }
+      list.innerHTML = games.map(g => {
+        const age = fmtAge(Date.now() - g.createdAtMs);
+        const href = `./play.html?gameId=${encodeURIComponent(g.gameId)}`;
+        return `
+          <div class="card">
+            <div class="row">
+              <div>
+                <div><b>${g.whiteName}</b> vs <b>${g.blackName}</b></div>
+                <div class="muted">moves: ${g.moveCount} • age: ${age} • id: <code>${g.gameId}</code></div>
+              </div>
+              <a class="btn" href="${href}">Open</a>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function load() {
+      const r = await fetch(`${API}/api/games/active?limit=50`);
+      const j = await r.json();
+      if (!j.success) throw new Error(j.error || 'failed');
+      render(j.games || []);
+    }
+
+    document.getElementById('refresh').onclick = () => load().catch(e => alert(String(e)));
+
+    load().catch(e => {
+      list.innerHTML = `<div class="card"><div class="muted">Failed to load: ${String(e)}</div></div>`;
+    });
+
+    setInterval(() => load().catch(()=>{}), 5000);
+  </script>
+</body>
+</html>

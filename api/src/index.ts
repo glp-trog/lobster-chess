@@ -13,10 +13,20 @@ type Agent = {
   lastSeenMs: number;
 };
 
+type ActiveGameMeta = {
+  gameId: string;
+  createdAtMs: number;
+  whiteName: string;
+  blackName: string;
+  status: GameStatus;
+  moveCount: number;
+};
+
 type LobbyState = {
   agents: Record<string, Agent>; // token -> Agent
   waiting: string[]; // agentId queue
   activeGames: Record<string, string>; // agentId -> gameId
+  activeGameMeta: Record<string, ActiveGameMeta>; // gameId -> meta (best-effort)
 };
 
 type GameStatus = 'active' | 'checkmate' | 'stalemate' | 'draw' | 'resigned' | 'timeout' | 'aborted';
@@ -185,7 +195,7 @@ export class LobbyDO {
   async load(): Promise<LobbyState> {
     const stored = await this.state.storage.get<LobbyState>('state');
     if (stored) return stored;
-    const init: LobbyState = { agents: {}, waiting: [], activeGames: {} };
+    const init: LobbyState = { agents: {}, waiting: [], activeGames: {}, activeGameMeta: {} };
     await this.state.storage.put('state', init);
     return init;
   }
@@ -300,6 +310,14 @@ export class LobbyDO {
 
         st.activeGames[white.agentId] = gameId;
         st.activeGames[black.agentId] = gameId;
+        st.activeGameMeta[gameId] = {
+          gameId,
+          createdAtMs: nowMs(),
+          whiteName: white.name,
+          blackName: black.name,
+          status: 'active',
+          moveCount: 0,
+        };
         await this.save(st);
 
         // init game DO
@@ -333,6 +351,54 @@ export class LobbyDO {
       const gameId = st.activeGames[agent.agentId] || null;
       const waiting = st.waiting.includes(agent.agentId);
       return ok({ status: gameId ? 'matched' : waiting ? 'waiting' : 'idle', gameId });
+    }
+
+    // List active games (best-effort)
+    if (req.method === 'GET' && path === '/api/games/active') {
+      const st = await this.load();
+      const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') || 25)));
+
+      // Refresh meta by asking GameDO for status; prune finished
+      const metas = Object.values(st.activeGameMeta);
+      metas.sort((a, b) => b.createdAtMs - a.createdAtMs);
+
+      const active: ActiveGameMeta[] = [];
+      for (const m of metas) {
+        if (active.length >= limit) break;
+        try {
+          const gid = this.env.GAME.idFromName(m.gameId);
+          const gstub = this.env.GAME.get(gid);
+          const resp = await gstub.fetch('https://internal/state');
+          const j = await resp.json<any>();
+          if (!j.success || !j.game) continue;
+          const g = j.game;
+          const status = g.status as GameStatus;
+          const moveCount = Number(g.moveCount || 0);
+
+          st.activeGameMeta[m.gameId] = {
+            ...m,
+            whiteName: g.white?.name || m.whiteName,
+            blackName: g.black?.name || m.blackName,
+            status,
+            moveCount,
+          };
+
+          if (status === 'active') {
+            active.push(st.activeGameMeta[m.gameId]);
+          } else {
+            // prune finished games from lobby index
+            delete st.activeGameMeta[m.gameId];
+            for (const [aid, gidStr] of Object.entries(st.activeGames)) {
+              if (gidStr === m.gameId) delete st.activeGames[aid];
+            }
+          }
+        } catch {
+          // ignore transient errors
+        }
+      }
+
+      await this.save(st);
+      return ok({ games: active });
     }
 
     // Proxy game endpoints to GameDO

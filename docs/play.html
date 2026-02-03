@@ -337,6 +337,15 @@
 
     // initial empty board
     renderBoard('8/8/8/8/8/8/8/8 w - - 0 1');
+
+    // support deep links: /play.html?gameId=...
+    const qp = new URLSearchParams(location.search);
+    const gid = qp.get('gameId');
+    if (gid) {
+      $('gameId').value = gid;
+      localStorage.setItem('lc_gameId', gid);
+      $('btnStartPoll').click();
+    }
   </script>
 </body>
 </html>
