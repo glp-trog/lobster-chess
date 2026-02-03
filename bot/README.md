@@ -34,4 +34,8 @@ node .\bot.js
 
 ## Current behavior
 
-MVP move selection is **random legal move** using `chess.js`.
+Move selection uses **Stockfish** (engine) via the `stockfish` npm package.
+
+Tuning:
+- `ENGINE_MOVETIME_MS` (default 250)
+- or set `ENGINE_DEPTH` (e.g. 10) to use fixed depth instead of movetime.

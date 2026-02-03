@@ -1,11 +1,15 @@
 import { Chess } from 'chess.js';
+import stockfish from 'stockfish';
 
-const API = (process.env.API_BASE || 'https://api.lobster-chess.com').trim().replace(/\/+$/,'');
+const API = (process.env.API_BASE || 'https://api.lobster-chess.com').trim().replace(/\/+$/, '');
 const INVITE = process.env.INVITE_CODE;
 const NAME = process.env.AGENT_NAME || `bot-${Math.random().toString(16).slice(2, 8)}`;
-const THINK_MS = Number(process.env.THINK_MS || 250);
+
+const ENGINE_MOVETIME_MS = Number(process.env.ENGINE_MOVETIME_MS || 250);
+const ENGINE_DEPTH = process.env.ENGINE_DEPTH ? Number(process.env.ENGINE_DEPTH) : null;
+
 const HEARTBEAT_MS = Number(process.env.HEARTBEAT_MS || 15000);
-const POLL_MS = Number(process.env.POLL_MS || 1200);
+const POLL_MS = Number(process.env.POLL_MS || 900);
 
 if (!INVITE) {
   console.error('Missing INVITE_CODE env var.');
@@ -34,17 +38,93 @@ async function get(path) {
   return j;
 }
 
-function toUci(move) {
-  // chess.js returns { from, to, promotion? }
-  return `${move.from}${move.to}${move.promotion || ''}`;
+// -----------------------------
+// Stockfish (UCI)
+// -----------------------------
+
+function createEngine() {
+  const sf = stockfish();
+  const listeners = new Set();
+
+  const onLine = (line) => {
+    for (const fn of listeners) fn(line);
+  };
+
+  // stockfish package supports either .onmessage (worker-like) or event callback
+  if (typeof sf === 'function') {
+    // some builds expose a function you call with commands and it returns lines via callbacks
+    // but stockfish() in this package returns a Worker-like interface in most environments.
+  }
+
+  if (sf && typeof sf.addEventListener === 'function') {
+    sf.addEventListener('message', (e) => onLine(String(e.data)));
+  } else if (sf && 'onmessage' in sf) {
+    sf.onmessage = (e) => onLine(String(e.data));
+  }
+
+  const send = (cmd) => {
+    if (sf && typeof sf.postMessage === 'function') sf.postMessage(cmd);
+    else if (typeof sf === 'function') sf(cmd);
+    else throw new Error('Unsupported stockfish interface');
+  };
+
+  const waitFor = (predicate, timeoutMs = 5000) =>
+    new Promise((resolve, reject) => {
+      const t0 = Date.now();
+      const fn = (line) => {
+        if (predicate(line)) {
+          listeners.delete(fn);
+          resolve(line);
+        } else if (Date.now() - t0 > timeoutMs) {
+          listeners.delete(fn);
+          reject(new Error('Engine timeout'));
+        }
+      };
+      listeners.add(fn);
+    });
+
+  const init = async () => {
+    send('uci');
+    await waitFor((l) => l === 'uciok', 8000);
+    send('isready');
+    await waitFor((l) => l === 'readyok', 8000);
+    // stronger + faster defaults
+    send('setoption name Threads value 1');
+    send('setoption name Hash value 64');
+    send('ucinewgame');
+    send('isready');
+    await waitFor((l) => l === 'readyok', 8000);
+  };
+
+  const bestMove = async (fen) => {
+    send(`position fen ${fen}`);
+    if (ENGINE_DEPTH && Number.isFinite(ENGINE_DEPTH)) {
+      send(`go depth ${ENGINE_DEPTH}`);
+    } else {
+      send(`go movetime ${ENGINE_MOVETIME_MS}`);
+    }
+    const line = await waitFor((l) => l.startsWith('bestmove '), 15000);
+    const parts = line.split(' ');
+    const mv = parts[1];
+    if (!mv || mv === '(none)') return null;
+    return mv.trim();
+  };
+
+  return { init, bestMove };
 }
 
-function pickMove(chess) {
-  // MVP: random legal move
+function randomLegalUci(fen) {
+  const chess = new Chess(fen);
   const moves = chess.moves({ verbose: true });
   if (!moves.length) return null;
   const m = moves[Math.floor(Math.random() * moves.length)];
-  return toUci(m);
+  return `${m.from}${m.to}${m.promotion || ''}`.toLowerCase();
+}
+
+function isLegalUci(fen, uci) {
+  const chess = new Chess(fen);
+  const moves = chess.moves({ verbose: true });
+  return moves.some((m) => `${m.from}${m.to}${m.promotion || ''}`.toLowerCase() === uci.toLowerCase());
 }
 
 async function main() {
@@ -67,6 +147,11 @@ async function main() {
       await sleep(HEARTBEAT_MS);
     }
   })();
+
+  // init engine once
+  const engine = createEngine();
+  await engine.init();
+  console.log(`[lobster-chess bot] engine ready (${ENGINE_DEPTH ? `depth ${ENGINE_DEPTH}` : `movetime ${ENGINE_MOVETIME_MS}ms`})`);
 
   // join loop
   let gameId = null;
@@ -102,15 +187,21 @@ async function main() {
     if (!myColor) throw new Error('Agent is not a participant in this game (unexpected)');
 
     if (game.turn === myColor) {
-      // think and move
-      await sleep(THINK_MS);
+      let uci = null;
+      try {
+        uci = await engine.bestMove(game.fen);
+      } catch (e) {
+        console.log(`[engine] error: ${e.message}`);
+      }
 
-      const chess = new Chess(game.fen);
-      const uci = pickMove(chess);
-      if (!uci) {
-        console.log('[lobster-chess bot] no legal moves');
-        await sleep(POLL_MS);
-        continue;
+      if (!uci || !isLegalUci(game.fen, uci)) {
+        const fallback = randomLegalUci(game.fen);
+        if (!fallback) {
+          console.log('[lobster-chess bot] no legal moves');
+          await sleep(POLL_MS);
+          continue;
+        }
+        uci = fallback;
       }
 
       try {
@@ -119,7 +210,6 @@ async function main() {
         console.log(`[move] ${myColor}: ${uci} -> turn=${ng.turn} moves=${ng.moveCount}`);
       } catch (e) {
         console.log(`[move] failed (${uci}): ${e.message}`);
-        // usually stale turn/race; just retry next poll
       }
     }
 
