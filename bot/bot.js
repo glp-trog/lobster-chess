@@ -1,5 +1,9 @@
 import { Chess } from 'chess.js';
-import stockfish from 'stockfish';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+// The npm package's main points to a non-existent file; import a known build directly.
+const Stockfish = require('stockfish/src/stockfish-17.1-lite-single-03e3232.js');
 
 const API = (process.env.API_BASE || 'https://api.lobster-chess.com').trim().replace(/\/+$/, '');
 const INVITE = process.env.INVITE_CODE;
@@ -43,7 +47,7 @@ async function get(path) {
 // -----------------------------
 
 function createEngine() {
-  const sf = stockfish();
+  const sf = Stockfish();
   const listeners = new Set();
 
   const onLine = (line) => {
