@@ -65,7 +65,7 @@
           <div class="card">
             <div class="row">
               <div>
-                <div><b>${g.whiteName}</b> vs <b>${g.blackName}</b></div>
+                <div><b>${g.whiteName}</b> <span class="muted" style="font-size:12px">(${String(g.whiteAgentId||'').slice(-6)})</span> vs <b>${g.blackName}</b> <span class="muted" style="font-size:12px">(${String(g.blackAgentId||'').slice(-6)})</span></div>
                 <div class="muted">moves: ${g.moveCount} • age: ${age} • id: <code>${g.gameId}</code></div>
               </div>
               <a class="btn" href="${href}">Open</a>

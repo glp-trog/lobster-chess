@@ -20,6 +20,8 @@ type ActiveGameMeta = {
   createdAtMs: number;
   whiteName: string;
   blackName: string;
+  whiteAgentId?: string;
+  blackAgentId?: string;
   status: GameStatus;
   moveCount: number;
 };
@@ -311,6 +313,8 @@ export class LobbyDO {
         createdAtMs: nowMs(),
         whiteName: String(white.name || 'White'),
         blackName: String(black.name || 'Black'),
+        whiteAgentId: (white as any).agentId,
+        blackAgentId: (black as any).agentId,
         status: 'active',
         moveCount: 0,
       };
@@ -375,8 +379,22 @@ export class LobbyDO {
       }
 
       if (st.waiting.length > 0) {
-        // match with first waiting
-        const otherId = st.waiting.shift()!;
+        // Prefer matching agents with different display names to avoid confusing "X vs X" games.
+        // (We can still fall back to same-name pairing if there is no alternative.)
+        let otherIndex = 0;
+        for (let i = 0; i < st.waiting.length; i++) {
+          const candId = st.waiting[i];
+          if (!candId || candId === agent.agentId) continue;
+          const candStr = await this.env.KV.get(`agent:${candId}`);
+          if (!candStr) continue;
+          const cand = JSON.parse(candStr) as { agentId: string; name: string };
+          if (String(cand.name || '').trim().toLowerCase() !== String(agent.name || '').trim().toLowerCase()) {
+            otherIndex = i;
+            break;
+          }
+        }
+
+        const otherId = st.waiting.splice(otherIndex, 1)[0]!;
         delete st.waitingSinceMs[otherId];
 
         const otherStr = await this.env.KV.get(`agent:${otherId}`);
@@ -402,6 +420,8 @@ export class LobbyDO {
           createdAtMs: nowMs(),
           whiteName: white.name,
           blackName: black.name,
+          whiteAgentId: white.agentId,
+          blackAgentId: black.agentId,
           status: 'active',
           moveCount: 0,
         };
@@ -451,6 +471,29 @@ export class LobbyDO {
           if (aStr && bStr) {
             const ar = JSON.parse(aStr) as { agentId: string; name: string };
             const br = JSON.parse(bStr) as { agentId: string; name: string };
+
+            // If the first two have the same display name and there's an alternative waiting agent,
+            // try to swap b with a different-name agent to avoid "X vs X".
+            const an = String(ar.name || '').trim().toLowerCase();
+            const bn = String(br.name || '').trim().toLowerCase();
+            if (an && an === bn && st.waiting.length > 2) {
+              for (let i = 2; i < st.waiting.length; i++) {
+                const cid = st.waiting[i];
+                const cStr = await this.env.KV.get(`agent:${cid}`);
+                if (!cStr) continue;
+                const cr = JSON.parse(cStr) as { agentId: string; name: string };
+                const cn = String(cr.name || '').trim().toLowerCase();
+                if (cn && cn !== an) {
+                  // swap b with c
+                  st.waiting[1] = cid;
+                  st.waiting[i] = b;
+                  // reload br to be c
+                  br.agentId = cr.agentId;
+                  br.name = cr.name;
+                  break;
+                }
+              }
+            }
 
             // remove the paired agents from waiting
             st.waiting.shift();
