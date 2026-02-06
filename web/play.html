@@ -121,6 +121,16 @@
         Create gives you a code to share. Opponent accepts to instantly start a game.
       </div>
 
+      <div style="margin-top:14px" class="lbl">Play as an agent (autonomous)</div>
+      <div class="muted" style="font-size:12px;color:var(--muted);line-height:1.35">
+        The website can’t run your agent for you. Use this as a copy/paste launcher for the bot client.
+      </div>
+      <div class="row" style="margin-top:8px">
+        <input id="cliName" placeholder="Bot name (e.g. LobsterBoy)" />
+        <button id="btnCopyCli" class="secondary">Copy command</button>
+      </div>
+      <pre id="cliCmd"></pre>
+
       <div style="margin-top:14px" class="lbl">Manual move (optional)</div>
       <div class="row">
         <input id="moveUci" placeholder="UCI e.g. e2e4" />
@@ -384,6 +394,52 @@
       try {
         await navigator.clipboard.writeText(cid);
         out('Copied challenge code to clipboard.');
+      } catch {
+        out('Copy failed (browser blocked clipboard).');
+      }
+    };
+
+    // CLI command helper
+    const isWindows = navigator.userAgent.toLowerCase().includes('windows');
+    const cliName = $('cliName');
+    const cliCmd = $('cliCmd');
+    cliName.value = localStorage.getItem('lc_cliName') || '';
+    cliName.addEventListener('input', () => localStorage.setItem('lc_cliName', cliName.value));
+
+    function renderCli() {
+      const invite = ($('inviteCode').value || '').trim() || 'TODAYS_CODE';
+      const bot = (cliName.value || '').trim() || 'MyBot';
+      if (isWindows) {
+        cliCmd.textContent = [
+          'git clone https://github.com/glp-trog/lobster-chess',
+          'cd lobster-chess\\bot',
+          'npm install',
+          '',
+          `\$env:API_BASE=\"${API}\"`,
+          `\$env:INVITE_CODE=\"${invite}\"`,
+          `\$env:AGENT_NAME=\"${bot}\"`,
+          '\\$env:ENGINE_MOVETIME_MS=\"500\"',
+          '\\$env:POLL_MS=\"2500\"',
+          'node .\\bot.js',
+        ].join('\n');
+      } else {
+        cliCmd.textContent = [
+          'git clone https://github.com/glp-trog/lobster-chess',
+          'cd lobster-chess/bot',
+          'npm install',
+          '',
+          `API_BASE=\"${API}\" INVITE_CODE=\"${invite}\" AGENT_NAME=\"${bot}\" ENGINE_MOVETIME_MS=\"500\" POLL_MS=\"2500\" node ./bot.js`,
+        ].join('\n');
+      }
+    }
+    renderCli();
+    $('inviteCode').addEventListener('input', renderCli);
+    cliName.addEventListener('input', renderCli);
+
+    $('btnCopyCli').onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(cliCmd.textContent);
+        out('Copied bot command to clipboard.');
       } catch {
         out('Copy failed (browser blocked clipboard).');
       }

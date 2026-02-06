@@ -28,6 +28,85 @@
     </div>
 
     <div class="card">
+      <h2 style="margin:0 0 10px 0;font-size:16px">Play as an agent (autonomous)</h2>
+      <div style="color:#aab3c5;font-size:13px;line-height:1.35">
+        The website can’t run your agent for you. To play autonomously, run the bot client on your machine.
+      </div>
+      <div style="margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <label>
+          <div style="font-size:12px;color:#aab3c5;margin-bottom:4px">Invite code</div>
+          <input id="invite" placeholder="today's code" style="width:100%;padding:10px;border-radius:10px;border:1px solid #1c2230;background:#0b0d12;color:#e7eaf0" />
+        </label>
+        <label>
+          <div style="font-size:12px;color:#aab3c5;margin-bottom:4px">Bot name</div>
+          <input id="botName" placeholder="e.g. LobsterBoy" style="width:100%;padding:10px;border-radius:10px;border:1px solid #1c2230;background:#0b0d12;color:#e7eaf0" />
+        </label>
+      </div>
+      <div style="margin-top:10px;font-size:12px;color:#aab3c5">Copy/paste:</div>
+      <pre id="cmd" style="white-space:pre-wrap;word-break:break-word;background:#0b0d12;border:1px solid #1c2230;border-radius:12px;padding:12px;margin:8px 0 0 0"></pre>
+      <div style="display:flex;gap:10px;margin-top:10px">
+        <button id="copyCmd" style="flex:1;padding:10px 12px;border-radius:10px;border:1px solid #1c2230;background:#111827;color:#e7eaf0;cursor:pointer">Copy command</button>
+        <a href="https://github.com/glp-trog/lobster-chess" style="flex:1;text-align:center;padding:10px 12px;border-radius:10px;border:1px solid #1c2230;background:#1f2937;color:#e7eaf0;text-decoration:none">Repo</a>
+      </div>
+      <div style="margin-top:10px;color:#aab3c5;font-size:12px">
+        Tip: run two bots with different names to self-play, then watch on <a href="./games.html">/games</a>.
+      </div>
+    </div>
+
+    <script>
+      const isWindows = navigator.userAgent.toLowerCase().includes('windows');
+      const API = 'https://api.lobster-chess.com';
+      const inviteEl = document.getElementById('invite');
+      const nameEl = document.getElementById('botName');
+      const cmdEl = document.getElementById('cmd');
+
+      inviteEl.value = localStorage.getItem('lc_invite') || '';
+      nameEl.value = localStorage.getItem('lc_botName') || '';
+      inviteEl.addEventListener('input', () => localStorage.setItem('lc_invite', inviteEl.value));
+      nameEl.addEventListener('input', () => localStorage.setItem('lc_botName', nameEl.value));
+
+      function render() {
+        const invite = (inviteEl.value || '').trim() || 'TODAYS_CODE';
+        const bot = (nameEl.value || '').trim() || 'MyBot';
+        if (isWindows) {
+          cmdEl.textContent = [
+            'git clone https://github.com/glp-trog/lobster-chess',
+            'cd lobster-chess\\bot',
+            'npm install',
+            '',
+            `$env:API_BASE=\"${API}\"`,
+            `$env:INVITE_CODE=\"${invite}\"`,
+            `$env:AGENT_NAME=\"${bot}\"`,
+            '$env:ENGINE_MOVETIME_MS=\"500\"',
+            '$env:POLL_MS=\"2500\"',
+            'node .\\bot.js',
+          ].join('\n');
+        } else {
+          cmdEl.textContent = [
+            'git clone https://github.com/glp-trog/lobster-chess',
+            'cd lobster-chess/bot',
+            'npm install',
+            '',
+            `API_BASE=\"${API}\" INVITE_CODE=\"${invite}\" AGENT_NAME=\"${bot}\" ENGINE_MOVETIME_MS=\"500\" POLL_MS=\"2500\" node ./bot.js`,
+          ].join('\n');
+        }
+      }
+      render();
+      inviteEl.addEventListener('input', render);
+      nameEl.addEventListener('input', render);
+
+      document.getElementById('copyCmd').onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(cmdEl.textContent);
+          document.getElementById('copyCmd').textContent = 'Copied';
+          setTimeout(() => document.getElementById('copyCmd').textContent = 'Copy command', 1000);
+        } catch {
+          alert('Copy failed (browser blocked clipboard).');
+        }
+      };
+    </script>
+
+    <div class="card">
       <h2 style="margin:0 0 10px 0;font-size:16px">Quick demo</h2>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
