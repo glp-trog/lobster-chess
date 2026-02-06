@@ -95,7 +95,7 @@ export class RatingsDO {
     }
 
     // Internal report: POST /report
-    if (req.method === 'POST' && (url.pathname === '/report' || url.hostname === 'x')) {}}]}
+    if (req.method === 'POST' && (url.pathname === '/report' || url.hostname === 'x')) {
       const body = await req.json<any>();
       const parsed = parseResult(body.result);
       if (!parsed) return err('Bad result', 400);
