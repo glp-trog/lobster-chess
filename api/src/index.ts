@@ -25,8 +25,9 @@ type ActiveGameMeta = {
 };
 
 type LobbyState = {
-  agents: Record<string, Agent>; // token -> Agent
+  agents: Record<string, Agent>; // legacy: token -> Agent (no longer populated)
   waiting: string[]; // agentId queue
+  waitingSinceMs: Record<string, number>; // agentId -> first queued time
   activeGames: Record<string, string>; // agentId -> gameId
   activeGameMeta: Record<string, ActiveGameMeta>; // gameId -> meta (best-effort)
 };
@@ -267,11 +268,12 @@ export class LobbyDO {
       // Backward-compatible defaults for older stored state
       if (!stored.activeGames) stored.activeGames = {};
       if (!stored.waiting) stored.waiting = [];
+      if (!stored.waitingSinceMs) stored.waitingSinceMs = {};
       if (!stored.agents) stored.agents = {};
       if (!stored.activeGameMeta) stored.activeGameMeta = {};
       return stored as LobbyState;
     }
-    const init: LobbyState = { agents: {}, waiting: [], activeGames: {}, activeGameMeta: {} };
+    const init: LobbyState = { agents: {}, waiting: [], waitingSinceMs: {}, activeGames: {}, activeGameMeta: {} };
     await this.state.storage.put('state', init);
     return init;
   }
@@ -335,15 +337,17 @@ export class LobbyDO {
       if (gate) return gate;
 
       const body = await readJson<{ agentToken?: string; timeControl?: TimeControl }>(req);
-      const token = body.agentToken || '';
+      const token = String(body.agentToken || '');
       const tc = (body.timeControl || '3+2') as TimeControl;
       if (tc !== '3+2') return err('Only 3+2 supported for MVP', 400);
 
+      // Resolve token via KV
+      const recStr = await this.env.KV.get(`token:${token}`);
+      if (!recStr) return err('Unknown agent token', 401);
+      const rec = JSON.parse(recStr) as { agentId: string; name: string };
+      const agent: Agent = { agentId: rec.agentId, name: rec.name, token, lastSeenMs: nowMs() };
+
       const st = await this.load();
-      const agent = st.agents[token];
-      if (!agent) return err('Unknown agent token', 401);
-      agent.lastSeenMs = nowMs();
-      st.agents[token] = agent;
 
       // If already in a game, return that
       const existing = st.activeGames[agent.agentId];
@@ -352,29 +356,31 @@ export class LobbyDO {
         return ok({ status: 'matched', gameId: existing });
       }
 
+      // Prune stale waiting entries using waitingSinceMs (no external calls)
+      const cutoff = nowMs() - 2 * 60 * 1000;
+      st.waiting = st.waiting.filter((aid) => (st.waitingSinceMs[aid] || 0) >= cutoff);
+
       // If already waiting, keep waiting
       if (st.waiting.includes(agent.agentId)) {
         await this.save(st);
         return ok({ status: 'waiting' });
       }
 
-      // Clean waiting list of stale agents (no heartbeat in 2 minutes)
-      const cutoff = nowMs() - 2 * 60 * 1000;
-      st.waiting = st.waiting.filter((aid) => {
-        const a = Object.values(st.agents).find((x) => x.agentId === aid);
-        return a && a.lastSeenMs >= cutoff;
-      });
-
       if (st.waiting.length > 0) {
         // match with first waiting
         const otherId = st.waiting.shift()!;
-        const other = Object.values(st.agents).find((x) => x.agentId === otherId);
-        if (!other) {
-          // other disappeared, requeue this agent
+        delete st.waitingSinceMs[otherId];
+
+        const otherStr = await this.env.KV.get(`agent:${otherId}`);
+        // If we can't resolve other, just requeue this agent
+        if (!otherStr) {
           st.waiting.push(agent.agentId);
+          st.waitingSinceMs[agent.agentId] = nowMs();
           await this.save(st);
           return ok({ status: 'waiting' });
         }
+        const otherRec = JSON.parse(otherStr) as { agentId: string; name: string };
+        const other: Agent = { agentId: otherRec.agentId, name: otherRec.name, token: 'n/a', lastSeenMs: nowMs() };
 
         const gameId = randomId('game');
         const whiteFirst = Math.random() < 0.5;
@@ -383,7 +389,6 @@ export class LobbyDO {
 
         st.activeGames[white.agentId] = gameId;
         st.activeGames[black.agentId] = gameId;
-        if (!st.activeGameMeta) st.activeGameMeta = {};
         st.activeGameMeta[gameId] = {
           gameId,
           createdAtMs: nowMs(),
@@ -413,17 +418,19 @@ export class LobbyDO {
       }
 
       st.waiting.push(agent.agentId);
+      st.waitingSinceMs[agent.agentId] = nowMs();
       await this.save(st);
       return ok({ status: 'waiting' });
     }
 
     if (req.method === 'GET' && path === '/api/queue/status') {
-      const token = url.searchParams.get('agentToken') || '';
+      const token = String(url.searchParams.get('agentToken') || '');
+      const recStr = await this.env.KV.get(`token:${token}`);
+      if (!recStr) return err('Unknown agent token', 401);
+      const rec = JSON.parse(recStr) as { agentId: string };
       const st = await this.load();
-      const agent = st.agents[token];
-      if (!agent) return err('Unknown agent token', 401);
-      const gameId = st.activeGames[agent.agentId] || null;
-      const waiting = st.waiting.includes(agent.agentId);
+      const gameId = st.activeGames[rec.agentId] || null;
+      const waiting = st.waiting.includes(rec.agentId);
       return ok({ status: gameId ? 'matched' : waiting ? 'waiting' : 'idle', gameId });
     }
 
