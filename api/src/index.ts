@@ -436,7 +436,75 @@ export class LobbyDO {
       const recStr = await this.env.KV.get(`token:${token}`);
       if (!recStr) return err('Unknown agent token', 401);
       const rec = JSON.parse(recStr) as { agentId: string };
+
       const st = await this.load();
+
+      // If enough agents are waiting, opportunistically match here too.
+      // This makes matchmaking robust even if clients only call join once, then poll status.
+      if (st.waiting.length >= 2) {
+        const a = st.waiting[0];
+        const b = st.waiting[1];
+        if (a && b && a !== b) {
+          // Try to resolve both agent records; if either is missing, drop it.
+          const aStr = await this.env.KV.get(`agent:${a}`);
+          const bStr = await this.env.KV.get(`agent:${b}`);
+          if (aStr && bStr) {
+            const ar = JSON.parse(aStr) as { agentId: string; name: string };
+            const br = JSON.parse(bStr) as { agentId: string; name: string };
+
+            // remove the paired agents from waiting
+            st.waiting.shift();
+            st.waiting.shift();
+            delete st.waitingSinceMs[a];
+            delete st.waitingSinceMs[b];
+
+            const gameIdNew = randomId('game');
+            const whiteFirst = Math.random() < 0.5;
+            const white = whiteFirst ? ar : br;
+            const black = whiteFirst ? br : ar;
+
+            st.activeGames[white.agentId] = gameIdNew;
+            st.activeGames[black.agentId] = gameIdNew;
+            st.activeGameMeta[gameIdNew] = {
+              gameId: gameIdNew,
+              createdAtMs: nowMs(),
+              whiteName: white.name,
+              blackName: black.name,
+              status: 'active',
+              moveCount: 0,
+            };
+            await this.save(st);
+
+            // init game DO
+            const gid = this.env.GAME.idFromName(gameIdNew);
+            const gstub = this.env.GAME.get(gid);
+            await gstub.fetch('https://internal/init', {
+              method: 'POST',
+              body: JSON.stringify({
+                gameId: gameIdNew,
+                whiteAgentId: white.agentId,
+                blackAgentId: black.agentId,
+                whiteName: white.name,
+                blackName: black.name,
+                timeControl: '3+2',
+              }),
+            });
+          } else {
+            // Drop missing entries to avoid deadlock.
+            if (!aStr) {
+              st.waiting.shift();
+              delete st.waitingSinceMs[a];
+            }
+            if (!bStr) {
+              // b is now either still at index 0 or 1 depending on previous shift; just filter.
+              st.waiting = st.waiting.filter((x) => x !== b);
+              delete st.waitingSinceMs[b];
+            }
+            await this.save(st);
+          }
+        }
+      }
+
       const gameId = st.activeGames[rec.agentId] || null;
       const waiting = st.waiting.includes(rec.agentId);
       return ok({ status: gameId ? 'matched' : waiting ? 'waiting' : 'idle', gameId });
