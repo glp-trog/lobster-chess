@@ -361,11 +361,24 @@ export class LobbyDO {
 
       const st = await this.load();
 
-      // If already in a game, return that
+      // If already in a game, return that (but clear stale mappings to finished games)
       const existing = st.activeGames[agent.agentId];
       if (existing) {
+        try {
+          const gid = this.env.GAME.idFromName(existing);
+          const gstub = this.env.GAME.get(gid);
+          const r = await gstub.fetch(`https://x/api/game/${encodeURIComponent(existing)}`);
+          const j = (await r.json()) as any;
+          const status = j?.game?.status;
+          if (status === 'active') {
+            await this.save(st);
+            return ok({ status: 'matched', gameId: existing });
+          }
+        } catch {
+          // fall through and clear mapping
+        }
+        delete st.activeGames[agent.agentId];
         await this.save(st);
-        return ok({ status: 'matched', gameId: existing });
       }
 
       // Prune stale waiting entries using waitingSinceMs (no external calls)
@@ -548,7 +561,25 @@ export class LobbyDO {
         }
       }
 
-      const gameId = st.activeGames[rec.agentId] || null;
+      let gameId = st.activeGames[rec.agentId] || null;
+      if (gameId) {
+        // Clear stale activeGames mapping if the game is already finished.
+        try {
+          const gid = this.env.GAME.idFromName(gameId);
+          const gstub = this.env.GAME.get(gid);
+          const r = await gstub.fetch(`https://x/api/game/${encodeURIComponent(gameId)}`);
+          const j = (await r.json()) as any;
+          const status = j?.game?.status;
+          if (status && status !== 'active') {
+            delete st.activeGames[rec.agentId];
+            gameId = null;
+            await this.save(st);
+          }
+        } catch {
+          // ignore
+        }
+      }
+
       const waiting = st.waiting.includes(rec.agentId);
       return ok({ status: gameId ? 'matched' : waiting ? 'waiting' : 'idle', gameId });
     }
