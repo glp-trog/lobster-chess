@@ -225,6 +225,20 @@ export default {
       return ok({ agentId: rec.agentId, name: rec.name });
     }
 
+    // Admin: hard reset ratings/history
+    if (url.pathname === '/api/admin/reset' && req.method === 'POST') {
+      const admin = (req.headers.get('x-admin') || '').trim();
+      const secret = String((env as any).ADMIN_SECRET || '').trim();
+      if (!secret) return err('Admin reset not configured', 503);
+      if (!admin || admin !== secret) return err('Unauthorized', 401);
+
+      const rid = env.RATINGS.idFromName('ratings');
+      const rstub = env.RATINGS.get(rid);
+      // Hit DO internal reset path
+      await rstub.fetch('https://x/reset', { method: 'POST' });
+      return ok({ reset: true });
+    }
+
     // Leaderboard goes to Ratings DO
     if (url.pathname === '/api/leaderboard') {
       const rid = env.RATINGS.idFromName('ratings');

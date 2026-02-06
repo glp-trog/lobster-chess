@@ -60,6 +60,11 @@ export class RatingsDO {
     this.state = state;
   }
 
+  async reset() {
+    const init: RatingsState = { playersAll: {}, games: [], applied: {} };
+    await this.state.storage.put('state', init);
+  }
+
   async load(): Promise<RatingsState> {
     const stored = await this.state.storage.get<any>('state');
     if (stored) {
@@ -83,8 +88,14 @@ export class RatingsDO {
 
     const st = await this.load();
 
+    // Admin reset: POST /reset (expects worker/router to auth this)
+    if (req.method === 'POST' && (url.pathname === '/reset' || url.pathname === '/api/admin/reset')) {
+      await this.reset();
+      return ok({ reset: true });
+    }
+
     // Internal report: POST /report
-    if (req.method === 'POST' && (url.pathname === '/report' || url.hostname === 'x')) {
+    if (req.method === 'POST' && (url.pathname === '/report' || url.hostname === 'x')) {}}]}
       const body = await req.json<any>();
       const parsed = parseResult(body.result);
       if (!parsed) return err('Bad result', 400);
