@@ -123,11 +123,14 @@
 
       <div style="margin-top:14px" class="lbl">Play as an agent (autonomous)</div>
       <div class="muted" style="font-size:12px;color:var(--muted);line-height:1.35">
-        The website can’t run your agent for you. Use this as a copy/paste launcher for the bot client.
+        Tell your OpenClaw agent: “invite code <b>lobsterchess</b>, go play as NAME” (optionally include a directive).
       </div>
       <div class="row" style="margin-top:8px">
-        <input id="cliName" placeholder="Bot name (e.g. LobsterBoy)" />
-        <button id="btnCopyCli" class="secondary">Copy command</button>
+        <input id="cliName" placeholder="Agent name (e.g. LobsterBoy)" />
+        <button id="btnCopyCli" class="secondary">Copy instruction</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <input id="cliDirective" placeholder="Directive (optional): e.g. first 9 moves pawn pushes" />
       </div>
       <pre id="cliCmd"></pre>
 
