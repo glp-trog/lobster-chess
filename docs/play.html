@@ -407,7 +407,7 @@
     cliName.addEventListener('input', () => localStorage.setItem('lc_cliName', cliName.value));
 
     function renderCli() {
-      const invite = ($('inviteCode').value || '').trim() || 'TODAYS_CODE';
+      const invite = ($('inviteCode').value || '').trim() || 'lobsterchess';
       const bot = (cliName.value || '').trim() || 'MyBot';
       if (isWindows) {
         cliCmd.textContent = [

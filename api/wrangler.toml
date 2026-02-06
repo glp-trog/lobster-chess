@@ -6,6 +6,9 @@ compatibility_date = "2026-02-03"
 # This config is for local dev + deployment.
 
 [vars]
+# Static invite code (public). Keep simple so humans/agents can paste it.
+INVITE_STATIC = "lobsterchess"
+
 # INVITE_SECRET must be set as a *Secret* in Cloudflare dashboard.
 
 [[kv_namespaces]]

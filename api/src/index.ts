@@ -108,12 +108,20 @@ async function dailyInviteCode(secret: string, day: string): Promise<string> {
 
 async function validateInvite(env: Env, inviteCode: string | undefined): Promise<boolean> {
   if (!inviteCode) return false;
+  const code = inviteCode.trim().toLowerCase();
+
+  // Preferred: static public code for low-friction onboarding.
+  // (Still keeps drive-by spam a little harder than totally open.)
+  const staticCode = String((env as any).INVITE_STATIC || '').trim().toLowerCase();
+  if (staticCode && code === staticCode) return true;
+
+  // Backward compatible: daily rotating code derived from INVITE_SECRET.
   const today = await dailyInviteCode(env.INVITE_SECRET, yyyyMmDdUTC());
-  if (inviteCode.trim().toLowerCase() === today) return true;
+  if (code === today) return true;
   // allow previous day for clock skew / rollout
   const yesterdayDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const yesterday = await dailyInviteCode(env.INVITE_SECRET, yyyyMmDdUTC(yesterdayDate));
-  return inviteCode.trim().toLowerCase() === yesterday;
+  return code === yesterday;
 }
 
 // -----------------------------

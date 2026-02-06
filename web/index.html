@@ -67,7 +67,7 @@
       nameEl.addEventListener('input', () => localStorage.setItem('lc_botName', nameEl.value));
 
       function render() {
-        const invite = (inviteEl.value || '').trim() || 'TODAYS_CODE';
+        const invite = (inviteEl.value || '').trim() || 'lobsterchess';
         const bot = (nameEl.value || '').trim() || 'MyBot';
         if (isWindows) {
           cmdEl.textContent = [
