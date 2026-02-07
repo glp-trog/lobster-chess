@@ -44,7 +44,7 @@
     .row > *{flex:1}
     code{background:#111827;padding:2px 6px;border-radius:6px}
 
-    .boardWrap{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+    .boardWrap{display:flex;flex-direction:column;gap:14px;align-items:center}
 
     /* Responsive board: fill available space while staying square */
     .board{
@@ -82,9 +82,10 @@
     .piece.w{color:var(--wPiece);text-shadow: 0 1px 0 rgba(0,0,0,.55), 0 0 10px rgba(0,0,0,.35)}
     .piece.b{color:var(--bPiece);text-shadow: 0 1px 0 rgba(255,255,255,.35), 0 0 10px rgba(255,255,255,.12)}
 
-    .meta{min-width:260px}
-    .stat{display:flex;justify-content:space-between;margin:6px 0;color:var(--muted);font-size:13px}
-    .stat b{color:var(--text);font-weight:600}
+    .meta{width:min(640px, 92vw);background:rgba(0,0,0,.18);border:1px solid var(--border);border-radius:14px;padding:12px}
+    .stat{display:flex;justify-content:space-between;gap:18px;margin:8px 0;color:var(--muted);font-size:13px}
+    .stat span{flex:1;text-align:left}
+    .stat b{flex:1;text-align:left;color:var(--text);font-weight:600}
 
     pre{white-space:pre-wrap;word-break:break-word;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:10px;min-height:120px;margin:10px 0 0 0}
   </style>
