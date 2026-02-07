@@ -6,8 +6,25 @@
   <title>Lobster Chess — Play</title>
   <style>
     :root{
-      --bg:#0b0d12;--panel:#0f1320;--border:#1c2230;--text:#e7eaf0;--muted:#aab3c5;
-      --light:#e5e7eb;--dark:#374151;--sel:#fbbf24;--hint:#60a5fa;
+      --bg:#070a10;
+      --panel:#0c1220;
+      --panel2:#0a0f1a;
+      --border:#1b2333;
+      --text:#eaf0ff;
+      --muted:#a7b2cb;
+
+      /* Board (classic warm theme) */
+      --sqLight:#f0d9b5;
+      --sqDark:#b58863;
+      --sqLight2:#f6e6c9;
+      --sqDark2:#c1946c;
+
+      --sel:#fbbf24;
+      --hint:#60a5fa;
+      --last:#34d399;
+
+      --wPiece:#f8fafc;
+      --bPiece:#0b1220;
     }
     body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:0;background:var(--bg);color:var(--text)}
     header{padding:18px 20px;border-bottom:1px solid var(--border);background:var(--panel);display:flex;gap:12px;align-items:center}
@@ -16,12 +33,12 @@
     main{padding:18px;max-width:1100px;margin:0 auto;display:grid;grid-template-columns:380px 1fr;gap:14px}
     @media(max-width:900px){main{grid-template-columns:1fr}}
 
-    .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px}
-    label{display:block;margin:8px 0}
-    .lbl{font-size:12px;color:var(--muted);margin-bottom:4px}
-    input{width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text)}
-    button{padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:#111827;color:var(--text);cursor:pointer}
-    button.secondary{background:#1f2937}
+    .card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--border);border-radius:14px;padding:14px}
+    label{display:block;margin:10px 0}
+    .lbl{font-size:12px;color:var(--muted);margin-bottom:6px;letter-spacing:.2px}
+    input{width:100%;padding:10px 12px;border-radius:12px;border:1px solid var(--border);background:#070b14;color:var(--text)}
+    button{padding:10px 12px;border-radius:12px;border:1px solid var(--border);background:#111a2b;color:var(--text);cursor:pointer}
+    button.secondary{background:#1a263e}
     button.danger{background:#2a0f12}
     .row{display:flex;gap:10px;align-items:center}
     .row > *{flex:1}
@@ -49,11 +66,21 @@
       .board{--sq: min(10.8vmin, 78px);max-width:min(96vw, 720px);max-height:min(96vw, 720px)}
     }
 
-    .sq{display:flex;align-items:center;justify-content:center;font-size:calc(var(--sq) * 0.58);user-select:none}
-    .sq.light{background:#111827}
-    .sq.dark{background:#0b1324}
+    .sq{display:flex;align-items:center;justify-content:center;font-size:calc(var(--sq) * 0.62);user-select:none;position:relative}
+    .sq.light{background:var(--sqLight)}
+    .sq.dark{background:var(--sqDark)}
+
+    /* Slight texture/contrast */
+    .sq.light{background-image: linear-gradient(180deg, var(--sqLight2), var(--sqLight))}
+    .sq.dark{background-image: linear-gradient(180deg, var(--sqDark2), var(--sqDark))}
+
     .sq.sel{outline:3px solid var(--sel);outline-offset:-3px}
-    .sq.hint{box-shadow: inset 0 0 0 3px rgba(96,165,250,.8)}
+    .sq.hint{box-shadow: inset 0 0 0 3px rgba(96,165,250,.85)}
+    .sq.last{box-shadow: inset 0 0 0 3px rgba(52,211,153,.85)}
+
+    .piece{display:inline-block;line-height:1;transform: translateY(-1px)}
+    .piece.w{color:var(--wPiece);text-shadow: 0 1px 0 rgba(0,0,0,.55), 0 0 10px rgba(0,0,0,.35)}
+    .piece.b{color:var(--bPiece);text-shadow: 0 1px 0 rgba(255,255,255,.35), 0 0 10px rgba(255,255,255,.12)}
 
     .meta{min-width:260px}
     .stat{display:flex;justify-content:space-between;margin:6px 0;color:var(--muted);font-size:13px}
@@ -226,10 +253,21 @@
     let lastGame = null;
     let pollHandle = null;
 
+    function lastMoveSquares() {
+      if (!lastGame || !lastGame.lastMove) return null;
+      const m = String(lastGame.lastMove || '').trim().toLowerCase();
+      if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(m)) return null;
+      return { from: m.slice(0,2), to: m.slice(2,4) };
+    }
+
     function renderBoard(fen) {
       const boardEl = $('board');
       boardEl.innerHTML = '';
       const squares = fenToBoard(fen);
+      const lm = lastMoveSquares();
+      const lmFrom = lm ? squareToIdx(lm.from) : -1;
+      const lmTo = lm ? squareToIdx(lm.to) : -1;
+
       for (let i=0; i<64; i++) {
         const rankFromTop = Math.floor(i/8);
         const file = i%8;
@@ -237,9 +275,18 @@
         const sq = document.createElement('div');
         sq.className = 'sq ' + (isDark ? 'dark' : 'light');
         sq.dataset.idx = String(i);
-        const p = squares[i];
-        sq.textContent = p ? pieceMap[p] : '';
+
+        if (i === lmFrom || i === lmTo) sq.classList.add('last');
         if (selected === i) sq.classList.add('sel');
+
+        const p = squares[i];
+        if (p) {
+          const span = document.createElement('span');
+          span.className = 'piece ' + (p === p.toUpperCase() ? 'w' : 'b');
+          span.textContent = pieceMap[p] || '';
+          sq.appendChild(span);
+        }
+
         boardEl.appendChild(sq);
       }
     }
