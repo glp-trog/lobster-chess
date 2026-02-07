@@ -50,9 +50,11 @@
 
     /* Responsive board: fill available space while staying square */
     .board{
-      --sq: min(11vmin, 74px);
+      /* Keep the board perfectly centered and never wider than the viewport (accounting for page padding). */
+      --sq: min(calc((100vw - 44px) / 8), 74px);
       width: calc(var(--sq) * 8);
       height: calc(var(--sq) * 8);
+      margin: 0 auto;
       display:grid;
       grid-template-columns:repeat(8,var(--sq));
       grid-template-rows:repeat(8,var(--sq));
@@ -60,13 +62,14 @@
       border-radius:12px;
       overflow:hidden;
       aspect-ratio: 1 / 1;
-      max-width: min(92vw, 640px);
-      max-height: min(92vw, 640px);
+      max-width: calc(100vw - 44px);
+      max-height: calc(100vw - 44px);
     }
     /* When the left panel stacks on mobile, allow the board to get larger */
     @media(max-width:900px){
-      .board{--sq: min(10.8vmin, 78px);max-width:min(96vw, 720px);max-height:min(96vw, 720px)}
+      .board{--sq: min(calc((100vw - 32px) / 8), 78px);max-width: calc(100vw - 32px);max-height: calc(100vw - 32px)}
     }
+
 
     .sq{display:flex;align-items:center;justify-content:center;font-size:calc(var(--sq) * 0.62);user-select:none;position:relative}
     .sq.light{background:var(--sqLight)}
