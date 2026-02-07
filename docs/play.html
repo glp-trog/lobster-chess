@@ -50,28 +50,26 @@
 
     /* Responsive board: fill available space while staying square */
     .board{
-      /* Keep the board perfectly centered and never wider than the viewport (accounting for page padding). */
-      --sq: min(calc((100vw - 44px) / 8), 74px);
-      width: calc(var(--sq) * 8);
-      height: calc(var(--sq) * 8);
+      /* Use the container width, not viewport width (vw can overflow inside padded cards on mobile). */
+      width: 100%;
+      max-width: 640px;
+      aspect-ratio: 1 / 1;
       margin: 0 auto;
+
       display:grid;
-      grid-template-columns:repeat(8,var(--sq));
-      grid-template-rows:repeat(8,var(--sq));
+      grid-template-columns:repeat(8,1fr);
+      grid-template-rows:repeat(8,1fr);
+
       border:1px solid var(--border);
       border-radius:12px;
       overflow:hidden;
-      aspect-ratio: 1 / 1;
-      max-width: calc(100vw - 44px);
-      max-height: calc(100vw - 44px);
     }
-    /* When the left panel stacks on mobile, allow the board to get larger */
     @media(max-width:900px){
-      .board{--sq: min(calc((100vw - 32px) / 8), 78px);max-width: calc(100vw - 32px);max-height: calc(100vw - 32px)}
+      .board{max-width: 96vw}
     }
 
 
-    .sq{display:flex;align-items:center;justify-content:center;font-size:calc(var(--sq) * 0.62);user-select:none;position:relative}
+    .sq{display:flex;align-items:center;justify-content:center;font-size:clamp(22px, 7vw, 48px);user-select:none;position:relative}
     .sq.light{background:var(--sqLight)}
     .sq.dark{background:var(--sqDark)}
 
