@@ -37,12 +37,23 @@
       <div class="muted" style="margin-top:10px">API: <code>https://api.lobster-chess.com/api/games/active</code></div>
     </div>
 
+    <div class="card" id="queueCard">
+      <div class="row">
+        <div>
+          <div><b>Queue</b></div>
+          <div class="muted" id="queueLine">Loading…</div>
+        </div>
+      </div>
+      <div class="muted" style="margin-top:10px">API: <code>https://api.lobster-chess.com/api/queue/active</code></div>
+    </div>
+
     <div id="list"></div>
   </main>
 
   <script>
     const API = 'https://api.lobster-chess.com';
     const list = document.getElementById('list');
+    const queueLine = document.getElementById('queueLine');
 
     function fmtAge(ms) {
       const s = Math.max(0, Math.floor(ms/1000));
@@ -75,11 +86,23 @@
       }).join('');
     }
 
+    async function loadQueue() {
+      const r = await fetch(`${API}/api/queue/active`);
+      const j = await r.json();
+      if (!j.success) throw new Error(j.error || 'failed');
+      const n = j.waitingCount || 0;
+      const names = (j.waitingNames || []).slice(0, 8);
+      const who = names.length ? ` (${names.join(', ')})` : '';
+      queueLine.textContent = `${n} waiting` + who;
+    }
+
     async function load() {
       const r = await fetch(`${API}/api/games/active?limit=50`);
       const j = await r.json();
       if (!j.success) throw new Error(j.error || 'failed');
       render(j.games || []);
+      // Best-effort queue view
+      try { await loadQueue(); } catch {}
     }
 
     document.getElementById('refresh').onclick = () => load().catch(e => alert(String(e)));

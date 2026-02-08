@@ -27,7 +27,12 @@ type ActiveGameMeta = {
 };
 
 type LobbyState = {
-  agents: Record<string, Agent>; // legacy: token -> Agent (no longer populated)
+  // token -> Agent record (used as the authoritative token registry)
+  agents: Record<string, Agent>;
+
+  // agentId -> basic identity (used for rendering + matchmaking heuristics)
+  agentById: Record<string, { agentId: string; name: string; lastSeenMs?: number }>;
+
   waiting: string[]; // agentId queue
   waitingSinceMs: Record<string, number>; // agentId -> first queued time
   activeGames: Record<string, string>; // agentId -> gameId
@@ -196,7 +201,8 @@ export default {
       return ok({ message: 'lobster-chess api', day: yyyyMmDdUTC() });
     }
 
-    // Register (KV) - avoid Durable Objects hot path
+    // Register (LobbyDO storage)
+    // NOTE: We intentionally avoid KV.put here because KV has daily write quotas.
     if (url.pathname === '/api/register' && req.method === 'POST') {
       const body = await readJson<{ inviteCode?: string; agentName?: string }>(req);
       const okInv = await validateInvite(env, body.inviteCode);
@@ -205,24 +211,33 @@ export default {
       const name = (body.agentName || '').trim() || 'AnonymousAgent';
       const agentId = randomId('agent');
       const token = randomId('token');
-      const now = nowMs();
 
-      await kvPutJson(env.KV, `token:${token}`, { agentId, name, createdAtMs: now });
-      await kvPutJson(env.KV, `agent:${agentId}`, { agentId, name, createdAtMs: now });
+      // Persist token->agent mapping in LobbyDO (Durable Object storage)
+      const lobbyId = env.LOBBY.idFromName('lobby');
+      const lobbyStub = env.LOBBY.get(lobbyId);
+      await lobbyStub.fetch('https://internal/registerAgent', {
+        method: 'POST',
+        body: JSON.stringify({ agentId, name, agentToken: token }),
+      });
 
       return ok({ agentId, agentToken: token, name });
     }
 
-    // Heartbeat (KV) - optional, best-effort
+    // Heartbeat (LobbyDO storage) - best-effort
     if (url.pathname === '/api/heartbeat' && req.method === 'POST') {
       const body = await readJson<{ agentToken?: string }>(req);
       const token = String(body.agentToken || '');
       if (!token) return err('Missing agentToken', 400);
-      const rec = await kvGetJson<{ agentId: string; name: string }>(env.KV, `token:${token}`);
-      if (!rec) return err('Unknown agent token', 401);
-      // Touch agent record (best-effort; doesn't need to be perfect)
-      await kvPutJson(env.KV, `agent:${rec.agentId}`, { agentId: rec.agentId, name: rec.name, lastSeenMs: nowMs() });
-      return ok({ agentId: rec.agentId, name: rec.name });
+
+      const lobbyId = env.LOBBY.idFromName('lobby');
+      const lobbyStub = env.LOBBY.get(lobbyId);
+      const resp = await lobbyStub.fetch('https://internal/agentLookup', {
+        method: 'POST',
+        body: JSON.stringify({ agentToken: token }),
+      });
+      const j = await resp.json<any>();
+      if (!j.success) return err('Unknown agent token', 401);
+      return ok({ agentId: j.agent.agentId, name: j.agent.name });
     }
 
     // Admin: hard reset ratings/history
@@ -294,10 +309,11 @@ export class LobbyDO {
       if (!stored.waiting) stored.waiting = [];
       if (!stored.waitingSinceMs) stored.waitingSinceMs = {};
       if (!stored.agents) stored.agents = {};
+      if (!stored.agentById) stored.agentById = {};
       if (!stored.activeGameMeta) stored.activeGameMeta = {};
       return stored as LobbyState;
     }
-    const init: LobbyState = { agents: {}, waiting: [], waitingSinceMs: {}, activeGames: {}, activeGameMeta: {} };
+    const init: LobbyState = { agents: {}, agentById: {}, waiting: [], waitingSinceMs: {}, activeGames: {}, activeGameMeta: {} };
     await this.state.storage.put('state', init);
     return init;
   }
@@ -358,6 +374,25 @@ export class LobbyDO {
 
     // /api/register and /api/heartbeat are handled at the Worker level (KV) to reduce DO volume.
 
+    if (req.method === 'GET' && path === '/api/queue/active') {
+      const st = await this.load();
+      const cutoff = nowMs() - 2 * 60 * 1000;
+      const waiting = st.waiting.filter((aid) => (st.waitingSinceMs[aid] || 0) >= cutoff);
+      // Keep state tidy
+      if (waiting.length !== st.waiting.length) {
+        st.waiting = waiting;
+        await this.save(st);
+      }
+
+      const names = waiting
+        .map((aid) => st.agentById[aid])
+        .filter(Boolean)
+        .map((a) => (a as any).name)
+        .slice(0, 25);
+
+      return ok({ waitingCount: waiting.length, waitingNames: names });
+    }
+
     if (req.method === 'POST' && path === '/api/queue/join') {
       const gate = await requireInvite();
       if (gate) return gate;
@@ -367,13 +402,14 @@ export class LobbyDO {
       const tc = (body.timeControl || '3+2') as TimeControl;
       if (tc !== '3+2') return err('Only 3+2 supported for MVP', 400);
 
-      // Resolve token via KV
-      const recStr = await this.env.KV.get(`token:${token}`);
-      if (!recStr) return err('Unknown agent token', 401);
-      const rec = JSON.parse(recStr) as { agentId: string; name: string };
-      const agent: Agent = { agentId: rec.agentId, name: rec.name, token, lastSeenMs: nowMs() };
-
       const st = await this.load();
+
+      // Resolve token via LobbyDO agent registry (Durable Object storage)
+      const rec = st.agents[token];
+      if (!rec) return err('Unknown agent token', 401);
+      const agent: Agent = { agentId: rec.agentId, name: rec.name, token, lastSeenMs: nowMs() };
+      rec.lastSeenMs = nowMs();
+      st.agents[token] = rec;
 
       // If already in a game, return that (but clear stale mappings to finished games)
       const existing = st.activeGames[agent.agentId];
@@ -412,9 +448,8 @@ export class LobbyDO {
         for (let i = 0; i < st.waiting.length; i++) {
           const candId = st.waiting[i];
           if (!candId || candId === agent.agentId) continue;
-          const candStr = await this.env.KV.get(`agent:${candId}`);
-          if (!candStr) continue;
-          const cand = JSON.parse(candStr) as { agentId: string; name: string };
+          const cand = st.agentById[candId];
+          if (!cand) continue;
           if (String(cand.name || '').trim().toLowerCase() !== String(agent.name || '').trim().toLowerCase()) {
             otherIndex = i;
             break;
@@ -424,15 +459,14 @@ export class LobbyDO {
         const otherId = st.waiting.splice(otherIndex, 1)[0]!;
         delete st.waitingSinceMs[otherId];
 
-        const otherStr = await this.env.KV.get(`agent:${otherId}`);
+        const otherRec = st.agentById[otherId];
         // If we can't resolve other, just requeue this agent
-        if (!otherStr) {
+        if (!otherRec) {
           st.waiting.push(agent.agentId);
           st.waitingSinceMs[agent.agentId] = nowMs();
           await this.save(st);
           return ok({ status: 'waiting' });
         }
-        const otherRec = JSON.parse(otherStr) as { agentId: string; name: string };
         const other: Agent = { agentId: otherRec.agentId, name: otherRec.name, token: 'n/a', lastSeenMs: nowMs() };
 
         const gameId = randomId('game');
@@ -480,11 +514,10 @@ export class LobbyDO {
 
     if (req.method === 'GET' && path === '/api/queue/status') {
       const token = String(url.searchParams.get('agentToken') || '');
-      const recStr = await this.env.KV.get(`token:${token}`);
-      if (!recStr) return err('Unknown agent token', 401);
-      const rec = JSON.parse(recStr) as { agentId: string };
 
       const st = await this.load();
+      const rec = st.agents[token];
+      if (!rec) return err('Unknown agent token', 401);
 
       // If enough agents are waiting, opportunistically match here too.
       // This makes matchmaking robust even if clients only call join once, then poll status.
@@ -493,11 +526,9 @@ export class LobbyDO {
         const b = st.waiting[1];
         if (a && b && a !== b) {
           // Try to resolve both agent records; if either is missing, drop it.
-          const aStr = await this.env.KV.get(`agent:${a}`);
-          const bStr = await this.env.KV.get(`agent:${b}`);
-          if (aStr && bStr) {
-            const ar = JSON.parse(aStr) as { agentId: string; name: string };
-            const br = JSON.parse(bStr) as { agentId: string; name: string };
+          const ar = st.agentById[a];
+          const br = st.agentById[b];
+          if (ar && br) {
 
             // If the first two have the same display name and there's an alternative waiting agent,
             // try to swap b with a different-name agent to avoid "X vs X".
@@ -506,9 +537,8 @@ export class LobbyDO {
             if (an && an === bn && st.waiting.length > 2) {
               for (let i = 2; i < st.waiting.length; i++) {
                 const cid = st.waiting[i];
-                const cStr = await this.env.KV.get(`agent:${cid}`);
-                if (!cStr) continue;
-                const cr = JSON.parse(cStr) as { agentId: string; name: string };
+                const cr = st.agentById[cid];
+                if (!cr) continue;
                 const cn = String(cr.name || '').trim().toLowerCase();
                 if (cn && cn !== an) {
                   // swap b with c
@@ -561,11 +591,11 @@ export class LobbyDO {
             });
           } else {
             // Drop missing entries to avoid deadlock.
-            if (!aStr) {
+            if (!ar) {
               st.waiting.shift();
               delete st.waitingSinceMs[a];
             }
-            if (!bStr) {
+            if (!br) {
               // b is now either still at index 0 or 1 depending on previous shift; just filter.
               st.waiting = st.waiting.filter((x) => x !== b);
               delete st.waitingSinceMs[b];
@@ -864,28 +894,40 @@ export class GameDO {
 const _LobbyFetch = LobbyDO.prototype.fetch;
 LobbyDO.prototype.fetch = async function (req: Request): Promise<Response> {
   const url = new URL(req.url);
+
+  // Internal: register agent token -> agent mapping.
+  if ((url.hostname === 'internal' || url.hostname === 'x') && url.pathname === '/registerAgent' && req.method === 'POST') {
+    const body = await readJson<{ agentId?: string; name?: string; agentToken?: string }>(req);
+    const agentId = String(body.agentId || '');
+    const name = String(body.name || '').trim() || 'AnonymousAgent';
+    const token = String(body.agentToken || '');
+    if (!agentId || !token) return err('Bad registerAgent payload', 400);
+
+    const st = await (this as any).load();
+    st.agents[token] = { agentId, name, token, lastSeenMs: nowMs() };
+    st.agentById[agentId] = { agentId, name, lastSeenMs: nowMs() };
+    await (this as any).save(st);
+    return ok({ registered: true });
+  }
+
+  // Internal: lookup agent info by token.
   if ((url.pathname === '/agentLookup' || url.hostname === 'internal') && req.method === 'POST') {
     const body = await readJson<{ agentToken?: string }>(req);
     const token = String(body.agentToken || '');
     if (!token) return err('Unknown agent token', 401);
 
-    // Prefer KV-based lookup (no lobby state dependency)
-    try {
-      const rec = await (this as any).env.KV.get(`token:${token}`);
-      if (rec) {
-        const agent = JSON.parse(rec);
-        return ok({ agent });
-      }
-    } catch {}
-
-    // Backward-compat fallback to old in-DO agent registry
     const st = await (this as any).load();
     const agent = st.agents[token];
     if (!agent) return err('Unknown agent token', 401);
+
+    // touch lastSeen
     agent.lastSeenMs = nowMs();
     st.agents[token] = agent;
+    st.agentById[agent.agentId] = { agentId: agent.agentId, name: agent.name, lastSeenMs: agent.lastSeenMs };
     await (this as any).save(st);
-    return ok({ agent });
+
+    return ok({ agent: { agentId: agent.agentId, name: agent.name } });
   }
+
   return _LobbyFetch.call(this, req);
 };
