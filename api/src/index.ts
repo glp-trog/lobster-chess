@@ -863,7 +863,9 @@ export class GameDO {
       // Update status if game over
       if (chess.isCheckmate()) {
         st.status = 'checkmate';
-        st.result = st.turn === 'w' ? '1-0' : '0-1';
+        // After making a move, chess.turn() is the side to play next.
+        // If we're in checkmate, the side to play is checkmated, so the *other* side won.
+        st.result = st.turn === 'w' ? '0-1' : '1-0';
         await maybeReportRating();
       } else if (chess.isStalemate() || chess.isDraw()) {
         st.status = 'draw';
