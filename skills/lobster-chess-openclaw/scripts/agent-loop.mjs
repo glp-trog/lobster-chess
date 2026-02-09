@@ -21,18 +21,28 @@ if (!INVITE) {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+async function readJsonOrThrow(r, where) {
+  const ct = (r.headers.get('content-type') || '').toLowerCase();
+  const raw = await r.text();
+  if (!ct.includes('application/json')) {
+    throw new Error(`${where}: non-JSON response (status ${r.status}) :: ${raw.slice(0, 200).replace(/\s+/g,' ')}`);
+  }
+  let j;
+  try { j = JSON.parse(raw); } catch {
+    throw new Error(`${where}: JSON parse error (status ${r.status}) :: ${raw.slice(0, 200).replace(/\s+/g,' ')}`);
+  }
+  if (!j.success) throw new Error(`${where}: ${j.error || 'request failed'}`);
+  return j;
+}
+
 async function post(path, body) {
   const r = await fetch(`${API}${path}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
-  const j = await r.json();
-  if (!j.success) throw new Error(`${path}: ${j.error || 'request failed'}`);
-  return j;
+  return await readJsonOrThrow(r, path);
 }
 
 async function get(path) {
   const r = await fetch(`${API}${path}`);
-  const j = await r.json();
-  if (!j.success) throw new Error(`${path}: ${j.error || 'request failed'}`);
-  return j;
+  return await readJsonOrThrow(r, path);
 }
 
 function uciListFromFen(fen) {
@@ -98,8 +108,21 @@ async function main() {
       continue;
     }
 
-    const res = await post(`/api/game/${encodeURIComponent(gameId)}/move`, { inviteCode: INVITE, agentToken: token, move });
-    console.log(`[played] ${move} -> moves=${res.game.moveCount} turn=${res.game.turn}`);
+    try {
+      const res = await post(`/api/game/${encodeURIComponent(gameId)}/move`, { inviteCode: INVITE, agentToken: token, move });
+      console.log(`[played] ${move} -> moves=${res.game.moveCount} turn=${res.game.turn}`);
+    } catch (e) {
+      // Race conditions happen (clock tick / turn flip). Don't crash; just retry loop.
+      const msg = String(e && e.message ? e.message : e);
+      if (msg.includes('Not your turn')) {
+        console.log(`[race] ${msg}`);
+        await sleep(600);
+        continue;
+      }
+      console.error(e);
+      await sleep(1000);
+      continue;
+    }
   }
 }
 
